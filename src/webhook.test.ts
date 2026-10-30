@@ -30,6 +30,27 @@ describe("postGrokWebhook", () => {
     author_id: "4",
     author_username: "ada",
     content: "hello ghp_abcdefghijklmnopqrstuvwxyz1234567890",
+    content_full: "hello ghp_abcdefghijklmnopqrstuvwxyz1234567890\n\n[Forwarded message]\nkey ghp_abcdefghijklmnopqrstuvwxyz0987654321",
+    is_forward: true,
+    forwarded: [
+      {
+        content: "key ghp_abcdefghijklmnopqrstuvwxyz0987654321",
+        embeds: [
+          {
+            title: null,
+            description: "token ghp_abcdefghijklmnopqrstuvwxyz1111111111",
+            url: null,
+            author: null,
+            author_url: null,
+            footer: null,
+            fields: [],
+          },
+        ],
+        attachments: [],
+      },
+    ],
+    embeds: [],
+    attachments: [],
     is_reply: false,
     referenced_message_id: null,
   };
@@ -38,6 +59,7 @@ describe("postGrokWebhook", () => {
     const sanitized = sanitizeWebhookPayload(payload);
     assert.equal(sanitized.content.includes("ghp_"), false);
     assert.match(sanitized.content, /\[redacted\]/);
+    assert.equal(JSON.stringify(sanitized).includes("ghp_"), false);
   });
 
   it("refuses to POST without a secret", async () => {

@@ -10,6 +10,7 @@ import type { ConnectorConfig } from "./config.ts";
 import { followUpWindowMs, publicError } from "./constants.ts";
 import { conversationKey, isDirectedAtBot, memberHasAllowedRole, shouldHandle } from "./filters.ts";
 import { createFileFollowUpStore } from "./follow-up.ts";
+import { extractMessage, flattenMessageText, type MessageInput } from "./message-text.ts";
 import { createChannelMutex } from "./mutex.ts";
 import { deliverOutbound } from "./outbound.ts";
 import { createRateLimiter } from "./rate-limit.ts";
@@ -59,6 +60,19 @@ async function homeChannel(message: Message): Promise<GuildTextBasedChannel> {
   }
 
   return message.channel;
+}
+
+function messageInput(message: Message): MessageInput {
+  return {
+    content: message.cleanContent,
+    embeds: message.embeds,
+    attachments: [...message.attachments.values()],
+    snapshots: [...message.messageSnapshots.values()].map((snapshot) => ({
+      content: snapshot.content,
+      embeds: snapshot.embeds,
+      attachments: [...snapshot.attachments.values()],
+    })),
+  };
 }
 
 function botNamesFor(config: ConnectorConfig, client: Client): string[] {
@@ -216,6 +230,7 @@ export async function startDiscordGateway(config: ConnectorConfig): Promise<Clie
           return;
         }
 
+        const extracted = extractMessage(messageInput(message));
         await postGrokWebhook(
           config.grokWebhookUrl,
           {
@@ -226,6 +241,11 @@ export async function startDiscordGateway(config: ConnectorConfig): Promise<Clie
             author_id: message.author.id,
             author_username: message.author.username,
             content: message.cleanContent,
+            content_full: flattenMessageText(extracted),
+            is_forward: extracted.forwarded.length > 0,
+            forwarded: extracted.forwarded,
+            embeds: extracted.embeds,
+            attachments: extracted.attachments,
             is_reply: Boolean(message.reference?.messageId),
             referenced_message_id: message.reference?.messageId ?? null,
           },

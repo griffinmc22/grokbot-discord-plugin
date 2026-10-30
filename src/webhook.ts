@@ -3,6 +3,7 @@ import http from "node:http";
 import https from "node:https";
 
 import { webhookTimeoutMs } from "./constants.ts";
+import type { ExtractedAttachment, ExtractedEmbed, ExtractedForward } from "./message-text.ts";
 import { redactSecrets } from "./redact.ts";
 import { pinWebhookAddress, type AddressLookup, type PinnedAddress } from "./webhook-url.ts";
 
@@ -38,7 +39,14 @@ export type WebhookPayload = {
   parent_channel_id: string;
   author_id: string;
   author_username: string;
+  /** The author's own text (discord.js cleanContent). Kept for backward compatibility. */
   content: string;
+  /** Note + forwarded messages + embeds + attachment URLs as one readable block. */
+  content_full: string;
+  is_forward: boolean;
+  forwarded: ExtractedForward[];
+  embeds: ExtractedEmbed[];
+  attachments: ExtractedAttachment[];
   is_reply: boolean;
   referenced_message_id: string | null;
 };
@@ -66,11 +74,43 @@ export function webhookHeaders(body: string, secret?: string): Record<string, st
   return headers;
 }
 
+function redactNullable(value: string | null): string | null {
+  return value === null ? null : redactSecrets(value);
+}
+
+function sanitizeEmbed(embed: ExtractedEmbed): ExtractedEmbed {
+  return {
+    title: redactNullable(embed.title),
+    description: redactNullable(embed.description),
+    url: redactNullable(embed.url),
+    author: redactNullable(embed.author),
+    author_url: redactNullable(embed.author_url),
+    footer: redactNullable(embed.footer),
+    fields: embed.fields.map((field) => ({ name: redactSecrets(field.name), value: redactSecrets(field.value) })),
+  };
+}
+
+function sanitizeAttachment(attachment: ExtractedAttachment): ExtractedAttachment {
+  return { ...attachment, name: redactNullable(attachment.name), url: redactSecrets(attachment.url) };
+}
+
+function sanitizeForward(forward: ExtractedForward): ExtractedForward {
+  return {
+    content: redactSecrets(forward.content),
+    embeds: forward.embeds.map(sanitizeEmbed),
+    attachments: forward.attachments.map(sanitizeAttachment),
+  };
+}
+
 export function sanitizeWebhookPayload(payload: WebhookPayload): WebhookPayload {
   return {
     ...payload,
     author_username: redactSecrets(payload.author_username),
     content: redactSecrets(payload.content),
+    content_full: redactSecrets(payload.content_full),
+    forwarded: payload.forwarded.map(sanitizeForward),
+    embeds: payload.embeds.map(sanitizeEmbed),
+    attachments: payload.attachments.map(sanitizeAttachment),
   };
 }
 
