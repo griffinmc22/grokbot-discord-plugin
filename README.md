@@ -2,6 +2,8 @@
 
 Talk to your Grok Bot from Discord. It only replies in the server channels you choose. Direct messages and other channels stay quiet.
 
+**This fork is an intake bridge by default.** Forward any Discord message into a private `#inbox` channel with a note. Every message from your allowlisted user ID goes to a Grok Bot webhook routine, with no @mention needed. The routine adds Google Calendar events or does research, then confirms with a reply. Setup, env vars, payload shape, and a routine prompt are in [docs/INTAKE-BRIDGE.md](docs/INTAKE-BRIDGE.md). The steps below describe the original mention-driven chat setup, which you get with `DISCORD_INTAKE_MODE=false`. Intake mode requires `DISCORD_ALLOWED_USER_IDS`.
+
 ## 1. Install the plugin
 
 Paste this into a chat with your Grok Bot:
