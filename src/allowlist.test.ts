@@ -88,3 +88,20 @@ describe("allowlist enforcement on send", () => {
     assert.deepEqual(modes, ["send"]);
   });
 });
+
+describe("category allowlist", () => {
+  const withCategory = { discordGuildId: "guild-1", discordChannelIds: ["chan-1"], discordCategoryIds: ["cat-1"] };
+
+  it("allows a channel whose category is listed, and keeps direct channels working", () => {
+    assert.equal(channelIsAllowed(withCategory, "guild-1", "chan-7", "cat-1"), true);
+    assert.equal(channelIsAllowed(withCategory, "guild-1", "chan-1", null), true);
+  });
+
+  it("rejects channels outside the category, without a category, or in another guild", () => {
+    assert.equal(channelIsAllowed(withCategory, "guild-1", "chan-7", "cat-2"), false);
+    assert.equal(channelIsAllowed(withCategory, "guild-1", "chan-7", null), false);
+    assert.equal(channelIsAllowed(withCategory, "guild-2", "chan-7", "cat-1"), false);
+    assert.equal(channelIsAllowed(config, "guild-1", "chan-7", "cat-1"), false);
+    assert.throws(() => assertChannelAllowed(withCategory, "guild-1", "chan-7", "cat-2"), /allowlist/);
+  });
+});

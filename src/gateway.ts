@@ -68,6 +68,35 @@ async function homeChannel(message: Message): Promise<GuildTextBasedChannel> {
   return message.channel;
 }
 
+/**
+ * Category of the message's parent text channel (for a thread, the thread's
+ * parent channel's parentId). Only looked up when DISCORD_CATEGORY_IDS is set
+ * and the channel is not already allowlisted directly; null when the parent
+ * is not a server text channel, so voice-channel chat and forum posts stay out.
+ */
+async function categoryIdFor(
+  config: ConnectorConfig,
+  message: Message,
+  parentId: string | null,
+): Promise<string | null> {
+  if (
+    config.discordCategoryIds.length === 0 ||
+    message.author.bot ||
+    message.webhookId ||
+    message.guildId !== config.discordGuildId ||
+    !parentId ||
+    config.discordChannelIds.includes(parentId)
+  ) {
+    return null;
+  }
+
+  try {
+    return (await homeChannel(message)).parentId ?? null;
+  } catch {
+    return null;
+  }
+}
+
 function messageInput(message: Message): MessageInput {
   return {
     content: message.cleanContent,
@@ -121,6 +150,7 @@ async function speak(
     config,
     guildId: message.guildId,
     parentChannelId: parentId,
+    categoryId: home.parentId,
     inThread,
     replyToMessageId: replyTo ? message.id : undefined,
     text,
@@ -166,7 +196,7 @@ export async function startDiscordGateway(config: ConnectorConfig): Promise<Clie
     process.stdout.write(`grok-discord ready as ${tag}; one replica per bot token\n`);
     process.stdout.write(
       config.intakeMode
-        ? `grok-discord intake mode: every message from ${config.discordAllowedUserIds.length} allowed user(s) in ${config.discordChannelIds.length} channel(s) is forwarded\n`
+        ? `grok-discord intake mode: every message from ${config.discordAllowedUserIds.length} allowed user(s) in ${config.discordChannelIds.length} channel(s) and ${config.discordCategoryIds.length} category(ies) is forwarded\n`
         : "grok-discord chat mode: only mentions, replies, bot names, and follow-ups are forwarded\n",
     );
     if (!config.grokWebhookUrl) {
@@ -185,8 +215,10 @@ export async function startDiscordGateway(config: ConnectorConfig): Promise<Clie
         webhookId: message.webhookId,
         guildId: message.guildId,
         parentChannelId: parentId,
+        categoryId: await categoryIdFor(config, message, parentId),
         configuredGuildId: config.discordGuildId,
         configuredChannelIds: config.discordChannelIds,
+        configuredCategoryIds: config.discordCategoryIds,
       })
     ) {
       return;

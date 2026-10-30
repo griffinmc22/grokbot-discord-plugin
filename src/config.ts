@@ -9,7 +9,10 @@ import { parsePublicWebhookUrl } from "./webhook-url.ts";
 export type ConnectorConfig = {
   discordToken: string;
   discordGuildId: string;
+  /** Allowlisted parent text channels. Optional when discordCategoryIds is set. */
   discordChannelIds: string[];
+  /** Allowlisted categories: any text channel under them (and its threads) is allowed. */
+  discordCategoryIds: string[];
   discordAllowedRoleIds: string[];
   /** Only these Discord user IDs are handled. Required when intakeMode is on. */
   discordAllowedUserIds: string[];
@@ -86,11 +89,20 @@ function parseChannelIds(env: EnvMap): string[] {
     ...parseSnowflakeList(optionalEnv("DISCORD_CHANNEL_ID", env), "DISCORD_CHANNEL_ID"),
   ]);
 
-  if (ids.size === 0) {
-    throw new Error("Missing required env DISCORD_CHANNEL_IDS");
+  return [...ids];
+}
+
+function parseChannelScope(env: EnvMap): { channelIds: string[]; categoryIds: string[] } {
+  const channelIds = parseChannelIds(env);
+  const categoryIds = parseSnowflakeList(optionalEnv("DISCORD_CATEGORY_IDS", env), "DISCORD_CATEGORY_IDS");
+
+  if (channelIds.length === 0 && categoryIds.length === 0) {
+    throw new Error(
+      "Missing required env DISCORD_CHANNEL_IDS or DISCORD_CATEGORY_IDS: set at least one allowlisted channel or category",
+    );
   }
 
-  return [...ids];
+  return { channelIds, categoryIds };
 }
 
 function parsePositiveMs(name: string, fallback: number, env: EnvMap): number {
@@ -179,10 +191,15 @@ export function loadConfig(env: EnvMap = process.env): ConnectorConfig {
     );
   }
 
+  const discordToken = requiredEnv("DISCORD_TOKEN", env);
+  const discordGuildId = assertSnowflake(requiredEnv("DISCORD_GUILD_ID", env), "DISCORD_GUILD_ID");
+  const scope = parseChannelScope(env);
+
   return {
-    discordToken: requiredEnv("DISCORD_TOKEN", env),
-    discordGuildId: assertSnowflake(requiredEnv("DISCORD_GUILD_ID", env), "DISCORD_GUILD_ID"),
-    discordChannelIds: parseChannelIds(env),
+    discordToken,
+    discordGuildId,
+    discordChannelIds: scope.channelIds,
+    discordCategoryIds: scope.categoryIds,
     discordAllowedRoleIds: parseSnowflakeList(
       optionalEnv("DISCORD_ALLOWED_ROLE_IDS", env),
       "DISCORD_ALLOWED_ROLE_IDS",

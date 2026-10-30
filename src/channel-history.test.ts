@@ -80,6 +80,7 @@ describe("discord_history (REST)", () => {
       discordToken: "test-token",
       discordGuildId: guildId,
       discordChannelIds: [channelId],
+      discordCategoryIds: [],
       discordAllowedRoleIds: [],
       discordAllowedUserIds: [ownerId],
       intakeMode: true,

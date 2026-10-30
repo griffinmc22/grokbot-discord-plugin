@@ -18,6 +18,7 @@ const config: ConnectorConfig = {
   discordToken: "test-token-ensure",
   discordGuildId: "111111111111111111",
   discordChannelIds: ["222222222222222222"],
+  discordCategoryIds: [],
   discordAllowedRoleIds: [],
   discordAllowedUserIds: ["333333333333333333"],
   intakeMode: true,

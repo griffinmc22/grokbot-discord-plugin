@@ -1,10 +1,15 @@
+import { channelIsAllowed } from "./allowlist.ts";
+
 export type HandleInput = {
   authorIsBot: boolean;
   webhookId?: string | null;
   guildId?: string | null;
   parentChannelId?: string | null;
+  /** Category of the parent channel (the parent channel's own parentId), if any. */
+  categoryId?: string | null;
   configuredGuildId: string;
   configuredChannelIds: string[];
+  configuredCategoryIds?: string[];
 };
 
 export function parentChannelId(channelId: string, threadParentId?: string | null): string | null {
@@ -24,15 +29,16 @@ export function shouldHandle(input: HandleInput): boolean {
     return false;
   }
 
-  if (!input.guildId) {
-    return false;
-  }
-
-  if (input.guildId !== input.configuredGuildId) {
-    return false;
-  }
-
-  return Boolean(input.parentChannelId && input.configuredChannelIds.includes(input.parentChannelId));
+  return channelIsAllowed(
+    {
+      discordGuildId: input.configuredGuildId,
+      discordChannelIds: input.configuredChannelIds,
+      discordCategoryIds: input.configuredCategoryIds,
+    },
+    input.guildId,
+    input.parentChannelId,
+    input.categoryId,
+  );
 }
 
 export type DirectedInput = {

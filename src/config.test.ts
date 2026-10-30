@@ -101,3 +101,47 @@ describe("loadConfig", () => {
     );
   });
 });
+
+describe("channel and category scope", () => {
+  const snowflakeCategory = "666666666666666666";
+
+  it("accepts categories alone, with no channel list", () => {
+    const config = loadConfig(baseEnv({ DISCORD_CHANNEL_IDS: undefined, DISCORD_CATEGORY_IDS: snowflakeCategory }));
+
+    assert.deepEqual(config.discordChannelIds, []);
+    assert.deepEqual(config.discordCategoryIds, [snowflakeCategory]);
+  });
+
+  it("accepts channels and categories together and defaults categories to empty", () => {
+    const both = loadConfig(baseEnv({ DISCORD_CATEGORY_IDS: `${snowflakeCategory}, ${snowflakeCategory}` }));
+    assert.deepEqual(both.discordChannelIds, [snowflakeChannel]);
+    assert.deepEqual(both.discordCategoryIds, [snowflakeCategory]);
+
+    assert.deepEqual(loadConfig(baseEnv()).discordCategoryIds, []);
+  });
+
+  it("requires at least one of DISCORD_CHANNEL_IDS or DISCORD_CATEGORY_IDS", () => {
+    assert.throws(
+      () => loadConfig(baseEnv({ DISCORD_CHANNEL_IDS: undefined, DISCORD_CATEGORY_IDS: undefined })),
+      /DISCORD_CHANNEL_IDS or DISCORD_CATEGORY_IDS/,
+    );
+    assert.throws(
+      () => loadConfig(baseEnv({ DISCORD_CHANNEL_IDS: " , ", DISCORD_CATEGORY_IDS: "${DISCORD_CATEGORY_IDS}" })),
+      /DISCORD_CHANNEL_IDS or DISCORD_CATEGORY_IDS/,
+    );
+  });
+
+  it("rejects non-snowflake category ids", () => {
+    assert.throws(() => loadConfig(baseEnv({ DISCORD_CATEGORY_IDS: "inbox" })), /DISCORD_CATEGORY_IDS must be a Discord snowflake/);
+  });
+
+  it("still fails closed on the user allowlist when only categories are set", () => {
+    assert.throws(
+      () =>
+        loadConfig(
+          baseEnv({ DISCORD_CHANNEL_IDS: undefined, DISCORD_CATEGORY_IDS: snowflakeCategory, DISCORD_ALLOWED_USER_IDS: undefined }),
+        ),
+      /DISCORD_ALLOWED_USER_IDS is required/,
+    );
+  });
+});

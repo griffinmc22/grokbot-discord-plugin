@@ -40,6 +40,42 @@ describe("shouldHandle", () => {
   });
 });
 
+describe("shouldHandle with categories", () => {
+  const scope = {
+    authorIsBot: false,
+    webhookId: null,
+    guildId: "guild-1",
+    configuredGuildId: "guild-1",
+    configuredChannelIds: [],
+    configuredCategoryIds: ["cat-inbox"],
+  };
+
+  it("handles a channel whose category is allowlisted", () => {
+    assert.equal(shouldHandle({ ...scope, parentChannelId: "chan-7", categoryId: "cat-inbox" }), true);
+  });
+
+  it("handles a thread under a channel in an allowlisted category (parent channel + its category)", () => {
+    // For a thread, parentChannelId is the thread's parent text channel and categoryId is that channel's parentId.
+    assert.equal(shouldHandle({ ...scope, parentChannelId: "chan-7", categoryId: "cat-inbox" }), true);
+    assert.equal(shouldHandle({ ...scope, parentChannelId: "chan-7", categoryId: null }), false);
+  });
+
+  it("rejects channels outside the category, other guilds, bots, and webhooks", () => {
+    assert.equal(shouldHandle({ ...scope, parentChannelId: "chan-7", categoryId: "cat-other" }), false);
+    assert.equal(shouldHandle({ ...scope, parentChannelId: "chan-7" }), false);
+    assert.equal(shouldHandle({ ...scope, guildId: "guild-2", parentChannelId: "chan-7", categoryId: "cat-inbox" }), false);
+    assert.equal(shouldHandle({ ...scope, authorIsBot: true, parentChannelId: "chan-7", categoryId: "cat-inbox" }), false);
+    assert.equal(shouldHandle({ ...scope, webhookId: "hook", parentChannelId: "chan-7", categoryId: "cat-inbox" }), false);
+  });
+
+  it("still handles directly listed channels with no category", () => {
+    assert.equal(
+      shouldHandle({ ...scope, configuredChannelIds: ["chan-1"], parentChannelId: "chan-1", categoryId: null }),
+      true,
+    );
+  });
+});
+
 describe("isDirectedAtBot", () => {
   const names = ["Grok", "ninja-bot"];
 
