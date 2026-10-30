@@ -36,6 +36,8 @@ export function shouldHandle(input: HandleInput): boolean {
 }
 
 export type DirectedInput = {
+  /** Intake channel: every message that passed shouldHandle and the user allowlist is for the bot. */
+  intakeMode?: boolean;
   mentionedBot: boolean;
   isReplyToBot: boolean;
   content: string;
@@ -71,7 +73,7 @@ export function namesBot(text: string, botNames: string[]): boolean {
 }
 
 export function isDirectedAtBot(input: DirectedInput): boolean {
-  if (input.mentionedBot || input.isReplyToBot) {
+  if (input.intakeMode || input.mentionedBot || input.isReplyToBot) {
     return true;
   }
 
@@ -84,6 +86,14 @@ export function isDirectedAtBot(input: DirectedInput): boolean {
 
 export function conversationKey(parentChannelId: string, authorId: string): string {
   return `channel:${parentChannelId}:user:${authorId}`;
+}
+
+export function userIsAllowed(allowedUserIds: string[], authorId: string): boolean {
+  if (allowedUserIds.length === 0) {
+    return true;
+  }
+
+  return allowedUserIds.includes(authorId);
 }
 
 export function memberHasAllowedRole(

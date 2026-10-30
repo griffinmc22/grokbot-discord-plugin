@@ -5,15 +5,52 @@ import { loadConfig, usableEnvValue } from "./config.ts";
 
 const snowflakeGuild = "111111111111111111";
 const snowflakeChannel = "222222222222222222";
+const snowflakeUser = "333333333333333333";
+const snowflakeUser2 = "444444444444444444";
 
 function baseEnv(overrides: Record<string, string | undefined> = {}) {
   return {
     DISCORD_TOKEN: "test-token",
     DISCORD_GUILD_ID: snowflakeGuild,
     DISCORD_CHANNEL_IDS: snowflakeChannel,
+    DISCORD_ALLOWED_USER_IDS: snowflakeUser,
     ...overrides,
   };
 }
+
+describe("intake mode and user allowlist", () => {
+  it("defaults to intake mode and parses a comma-separated user allowlist", () => {
+    const config = loadConfig(baseEnv({ DISCORD_ALLOWED_USER_IDS: ` ${snowflakeUser}, ${snowflakeUser2},${snowflakeUser} ` }));
+
+    assert.equal(config.intakeMode, true);
+    assert.deepEqual(config.discordAllowedUserIds, [snowflakeUser, snowflakeUser2]);
+  });
+
+  it("fails closed in intake mode when no user IDs are set", () => {
+    assert.throws(() => loadConfig(baseEnv({ DISCORD_ALLOWED_USER_IDS: undefined })), /DISCORD_ALLOWED_USER_IDS is required/);
+    assert.throws(() => loadConfig(baseEnv({ DISCORD_ALLOWED_USER_IDS: " , " })), /DISCORD_ALLOWED_USER_IDS is required/);
+    assert.throws(
+      () => loadConfig(baseEnv({ DISCORD_ALLOWED_USER_IDS: "${DISCORD_ALLOWED_USER_IDS}" })),
+      /DISCORD_ALLOWED_USER_IDS is required/,
+    );
+  });
+
+  it("rejects non-snowflake user IDs", () => {
+    assert.throws(() => loadConfig(baseEnv({ DISCORD_ALLOWED_USER_IDS: "griffin" })), /snowflake/);
+  });
+
+  it("allows an empty user list only when intake mode is explicitly off", () => {
+    const config = loadConfig(baseEnv({ DISCORD_ALLOWED_USER_IDS: "", DISCORD_INTAKE_MODE: "false" }));
+
+    assert.equal(config.intakeMode, false);
+    assert.deepEqual(config.discordAllowedUserIds, []);
+  });
+
+  it("rejects an unparseable DISCORD_INTAKE_MODE", () => {
+    assert.throws(() => loadConfig(baseEnv({ DISCORD_INTAKE_MODE: "maybe" })), /DISCORD_INTAKE_MODE/);
+    assert.equal(loadConfig(baseEnv({ DISCORD_INTAKE_MODE: "ON" })).intakeMode, true);
+  });
+});
 
 describe("usableEnvValue", () => {
   it("treats Cursor and empty placeholders as unset", () => {

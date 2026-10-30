@@ -8,7 +8,13 @@ import {
 
 import type { ConnectorConfig } from "./config.ts";
 import { followUpWindowMs, publicError } from "./constants.ts";
-import { conversationKey, isDirectedAtBot, memberHasAllowedRole, shouldHandle } from "./filters.ts";
+import {
+  conversationKey,
+  isDirectedAtBot,
+  memberHasAllowedRole,
+  shouldHandle,
+  userIsAllowed,
+} from "./filters.ts";
 import { createFileFollowUpStore } from "./follow-up.ts";
 import { extractMessage, flattenMessageText, type MessageInput } from "./message-text.ts";
 import { createChannelMutex } from "./mutex.ts";
@@ -158,6 +164,11 @@ export async function startDiscordGateway(config: ConnectorConfig): Promise<Clie
     booted = true;
     const tag = client.user?.tag ?? "unknown";
     process.stdout.write(`grok-discord ready as ${tag}; one replica per bot token\n`);
+    process.stdout.write(
+      config.intakeMode
+        ? `grok-discord intake mode: every message from ${config.discordAllowedUserIds.length} allowed user(s) in ${config.discordChannelIds.length} channel(s) is forwarded\n`
+        : "grok-discord chat mode: only mentions, replies, bot names, and follow-ups are forwarded\n",
+    );
     if (!config.grokWebhookUrl) {
       process.stdout.write("grok-discord GROK_WEBHOOK_URL is not set; inbound will not wake a Grok Bot\n");
     }
@@ -186,11 +197,16 @@ export async function startDiscordGateway(config: ConnectorConfig): Promise<Clie
       return;
     }
 
+    if (!userIsAllowed(config.discordAllowedUserIds, message.author.id)) {
+      return;
+    }
+
     const names = botNamesFor(config, client);
     const sessionKey = conversationKey(parentId, message.author.id);
     const directed = isDirectedAtBot({
+      intakeMode: config.intakeMode,
       mentionedBot: Boolean(client.user && message.mentions.has(client.user)),
-      isReplyToBot: await isReplyToBot(client, message),
+      isReplyToBot: !config.intakeMode && (await isReplyToBot(client, message)),
       content: message.cleanContent,
       botNames: names,
       followUp: followUps.isFollowUp(sessionKey),
@@ -213,7 +229,11 @@ export async function startDiscordGateway(config: ConnectorConfig): Promise<Clie
           return;
         }
 
-        const roomCommand = parseRoomCommand(message.cleanContent, names);
+        // In intake mode a forwarded message is always an intake item, whatever the note says.
+        const roomCommand =
+          config.intakeMode && message.messageSnapshots.size > 0
+            ? null
+            : parseRoomCommand(message.cleanContent, names, { slashOnly: config.intakeMode });
         if (roomCommand?.kind === "new") {
           followUps.clear(sessionKey);
           await speak(config, message, "Fresh thread. I'm listening.");

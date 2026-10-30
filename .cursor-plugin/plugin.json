@@ -34,10 +34,20 @@
         "title": "Allowlisted channel IDs",
         "description": "Comma-separated parent channel snowflakes. DMs and other channels are ignored."
       },
+      "DISCORD_ALLOWED_USER_IDS": {
+        "type": "string",
+        "title": "Allowed user IDs",
+        "description": "Comma-separated Discord user snowflakes. Only these users are handled. Required in intake mode (the default); the bridge refuses to start without it."
+      },
+      "DISCORD_INTAKE_MODE": {
+        "type": "string",
+        "title": "Intake mode",
+        "description": "Optional, default true. Every message from an allowed user in an allowlisted channel is forwarded; no @mention or bot name needed. Set false for mention-driven chat."
+      },
       "DISCORD_ALLOWED_ROLE_IDS": {
         "type": "string",
         "title": "Allowed role IDs",
-        "description": "Optional comma-separated role snowflakes. Empty means anyone in an allowlisted channel."
+        "description": "Optional comma-separated role snowflakes, checked in addition to DISCORD_ALLOWED_USER_IDS. Empty means no extra role check."
       },
       "GROK_WEBHOOK_URL": {
         "type": "string",
@@ -55,6 +65,6 @@
         "description": "Optional spoken name. Matched as a whole word anywhere in the message after mentions are stripped. Defaults to the Discord username."
       }
     },
-    "required": ["DISCORD_TOKEN", "DISCORD_GUILD_ID", "DISCORD_CHANNEL_IDS"]
+    "required": ["DISCORD_TOKEN", "DISCORD_GUILD_ID", "DISCORD_CHANNEL_IDS", "DISCORD_ALLOWED_USER_IDS"]
   }
 }

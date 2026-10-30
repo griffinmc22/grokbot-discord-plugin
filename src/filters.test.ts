@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import { describe, it } from "node:test";
 
-import { isDirectedAtBot, memberHasAllowedRole, namesBot, shouldHandle } from "./filters.ts";
+import { isDirectedAtBot, memberHasAllowedRole, namesBot, shouldHandle, userIsAllowed } from "./filters.ts";
 
 const allow = {
   configuredGuildId: "guild-1",
@@ -107,6 +107,28 @@ describe("isDirectedAtBot", () => {
     assert.equal(namesBot("ask Chief later", ["Chief"]), true);
     assert.equal(namesBot("ghost say hello to chief", ["chief"]), true);
     assert.equal(namesBot("chiefest", ["chief"]), false);
+  });
+});
+
+describe("isDirectedAtBot in intake mode", () => {
+  it("treats a plain note with no mention, name, reply, or follow-up as directed", () => {
+    const base = { mentionedBot: false, isReplyToBot: false, botNames: ["Grok"], followUp: false };
+
+    assert.equal(isDirectedAtBot({ ...base, intakeMode: true, content: "dinner with sam friday 7pm" }), true);
+    assert.equal(isDirectedAtBot({ ...base, intakeMode: true, content: "" }), true);
+    assert.equal(isDirectedAtBot({ ...base, intakeMode: false, content: "dinner with sam friday 7pm" }), false);
+    assert.equal(isDirectedAtBot({ ...base, content: "dinner with sam friday 7pm" }), false);
+  });
+});
+
+describe("userIsAllowed", () => {
+  it("only admits listed user IDs when the allowlist is set", () => {
+    assert.equal(userIsAllowed(["333333333333333333"], "333333333333333333"), true);
+    assert.equal(userIsAllowed(["333333333333333333"], "444444444444444444"), false);
+  });
+
+  it("admits anyone when the list is empty (chat mode only; intake mode refuses to load)", () => {
+    assert.equal(userIsAllowed([], "444444444444444444"), true);
   });
 });
 

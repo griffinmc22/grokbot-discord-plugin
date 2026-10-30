@@ -11,6 +11,10 @@ export type ConnectorConfig = {
   discordGuildId: string;
   discordChannelIds: string[];
   discordAllowedRoleIds: string[];
+  /** Only these Discord user IDs are handled. Required when intakeMode is on. */
+  discordAllowedUserIds: string[];
+  /** Every allowed user's message in an allowlisted channel is directed; no mention or name needed. */
+  intakeMode: boolean;
   grokWebhookUrl?: string;
   grokWebhookSecret?: string;
   botNamePrefix?: string;
@@ -125,6 +129,23 @@ function parseWebhookUrl(raw: string | undefined): string | undefined {
   return parsePublicWebhookUrl(raw);
 }
 
+export function parseBooleanEnv(name: string, fallback: boolean, env: EnvMap): boolean {
+  const raw = optionalEnv(name, env);
+  if (!raw) {
+    return fallback;
+  }
+
+  if (/^(?:1|true|yes|on)$/i.test(raw)) {
+    return true;
+  }
+
+  if (/^(?:0|false|no|off)$/i.test(raw)) {
+    return false;
+  }
+
+  throw new Error(`${name} must be true or false`);
+}
+
 function parseBotNamePrefix(raw: string | undefined): string | undefined {
   if (!raw) {
     return undefined;
@@ -145,6 +166,19 @@ export function loadConfig(env: EnvMap = process.env): ConnectorConfig {
     throw new Error("GROK_WEBHOOK_SECRET is required when GROK_WEBHOOK_URL is set");
   }
 
+  const intakeMode = parseBooleanEnv("DISCORD_INTAKE_MODE", true, env);
+  const discordAllowedUserIds = parseSnowflakeList(
+    optionalEnv("DISCORD_ALLOWED_USER_IDS", env),
+    "DISCORD_ALLOWED_USER_IDS",
+  );
+
+  if (intakeMode && discordAllowedUserIds.length === 0) {
+    throw new Error(
+      "DISCORD_ALLOWED_USER_IDS is required in intake mode: set it to your comma-separated Discord user IDs " +
+        "(or set DISCORD_INTAKE_MODE=false for mention-driven chat). Refusing to accept messages from everyone.",
+    );
+  }
+
   return {
     discordToken: requiredEnv("DISCORD_TOKEN", env),
     discordGuildId: assertSnowflake(requiredEnv("DISCORD_GUILD_ID", env), "DISCORD_GUILD_ID"),
@@ -153,6 +187,8 @@ export function loadConfig(env: EnvMap = process.env): ConnectorConfig {
       optionalEnv("DISCORD_ALLOWED_ROLE_IDS", env),
       "DISCORD_ALLOWED_ROLE_IDS",
     ),
+    discordAllowedUserIds,
+    intakeMode,
     grokWebhookUrl,
     grokWebhookSecret,
     botNamePrefix: parseBotNamePrefix(optionalEnv("BOT_NAME_PREFIX", env)),

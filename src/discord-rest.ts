@@ -138,6 +138,8 @@ export function createDiscordRest(config: ConnectorConfig, rest = new REST({ ver
         guild: { id: guild.id, name: guild.name },
         channels,
         allowedRoleIds: config.discordAllowedRoleIds,
+        allowedUserIds: config.discordAllowedUserIds,
+        intakeMode: config.intakeMode,
         webhookConfigured: Boolean(config.grokWebhookUrl),
       };
     },

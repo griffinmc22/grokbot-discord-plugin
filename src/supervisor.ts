@@ -70,6 +70,8 @@ export function workerEnv(config: ConnectorConfig): NodeJS.ProcessEnv {
     DISCORD_GUILD_ID: config.discordGuildId,
     DISCORD_CHANNEL_IDS: config.discordChannelIds.join(","),
     DISCORD_ALLOWED_ROLE_IDS: config.discordAllowedRoleIds.join(","),
+    DISCORD_ALLOWED_USER_IDS: config.discordAllowedUserIds.join(","),
+    DISCORD_INTAKE_MODE: String(config.intakeMode),
     GROK_WEBHOOK_URL: config.grokWebhookUrl ?? "",
     GROK_WEBHOOK_SECRET: config.grokWebhookSecret ?? "",
     BOT_NAME_PREFIX: config.botNamePrefix ?? "",
