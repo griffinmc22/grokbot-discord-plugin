@@ -10,7 +10,12 @@ import {
 } from "discord.js";
 
 import { assertChannelAllowed } from "./allowlist.ts";
-import { formatHistoryLine, shouldIncludeHistoryMessage, type HistoryEntry } from "./channel-history.ts";
+import {
+  formatHistoryLine,
+  historyContent,
+  shouldIncludeHistoryMessage,
+  type HistoryEntry,
+} from "./channel-history.ts";
 import type { ConnectorConfig } from "./config.ts";
 import { recentHistoryLimit } from "./constants.ts";
 import { assertSafeEmoji, assertSnowflake } from "./ids.ts";
@@ -222,15 +227,20 @@ export function createDiscordRest(config: ConnectorConfig, rest = new REST({ ver
           bot: Boolean(message.author.bot),
           webhook: Boolean(message.webhook_id),
           roleIds: withMember.member?.roles ?? [],
-          content: message.content,
-          attachmentNames: message.attachments.map((file) => file.filename),
+          content: historyContent(message),
         };
       });
 
       const authorId = currentAuthorId ?? entries[0]?.authorId ?? me.id;
       const lines = entries
         .filter((entry) =>
-          shouldIncludeHistoryMessage(config.discordAllowedRoleIds, authorId, me.id, entry),
+          shouldIncludeHistoryMessage(
+            config.discordAllowedRoleIds,
+            config.discordAllowedUserIds,
+            authorId,
+            me.id,
+            entry,
+          ),
         )
         .reverse()
         .map(formatHistoryLine);

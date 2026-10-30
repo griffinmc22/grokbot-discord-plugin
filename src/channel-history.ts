@@ -1,4 +1,5 @@
 import { maxHistoryLineChars } from "./constants.ts";
+import { extractMessage, flattenMessageText, fromApiMessage, type ApiMessageInput } from "./message-text.ts";
 import { redactSecrets } from "./redact.ts";
 
 export type HistoryEntry = {
@@ -8,12 +9,18 @@ export type HistoryEntry = {
   bot: boolean;
   webhook: boolean;
   roleIds: string[];
+  /** Note, forwarded messages, embeds, and attachment URLs, flattened by message-text. */
   content: string;
-  attachmentNames: string[];
 };
+
+/** Readable text for a raw REST message, including forwarded snapshots, embeds, and attachments. */
+export function historyContent(message: ApiMessageInput): string {
+  return flattenMessageText(extractMessage(fromApiMessage(message)));
+}
 
 export function shouldIncludeHistoryMessage(
   allowedRoleIds: string[],
+  allowedUserIds: string[],
   currentAuthorId: string,
   botUserId: string | undefined,
   entry: Pick<HistoryEntry, "id" | "authorId" | "bot" | "webhook" | "roleIds">,
@@ -31,7 +38,7 @@ export function shouldIncludeHistoryMessage(
     return false;
   }
 
-  if (entry.authorId === currentAuthorId) {
+  if (entry.authorId === currentAuthorId || allowedUserIds.includes(entry.authorId)) {
     return true;
   }
 
@@ -43,16 +50,7 @@ export function shouldIncludeHistoryMessage(
 }
 
 export function formatHistoryLine(entry: HistoryEntry): string {
-  const extras: string[] = [];
-  const text = entry.content.replace(/\s+/g, " ").trim();
-  if (entry.attachmentNames.length > 0) {
-    extras.push(`[${entry.attachmentNames.join(", ")}]`);
-  }
-  if (!text && extras.length === 0) {
-    extras.push("[empty]");
-  }
-
-  const body = [text, ...extras].filter(Boolean).join(" ");
+  const body = entry.content.replace(/\s+/g, " ").trim() || "[empty]";
   const clipped = body.length > maxHistoryLineChars ? `${body.slice(0, maxHistoryLineChars)}…` : body;
   return `${entry.authorName}: ${redactSecrets(clipped)}`;
 }

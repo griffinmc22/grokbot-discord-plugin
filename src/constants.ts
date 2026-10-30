@@ -6,5 +6,5 @@ export const defaultRatePerUser = 6;
 export const defaultRatePerChannel = 15;
 export const webhookTimeoutMs = 15_000;
 export const recentHistoryLimit = 15;
-export const maxHistoryLineChars = 400;
+export const maxHistoryLineChars = 1500;
 export const supervisorRestartDelayMs = 2_000;
