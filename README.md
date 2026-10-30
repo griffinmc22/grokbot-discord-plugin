@@ -7,7 +7,7 @@ Talk to your Grok Bot from Discord. It only replies in the server channels you c
 Paste this into a chat with your Grok Bot:
 
 ```
-Install Discord for Grok Bot from https://github.com/NinjaProtocol/grokbot-discord and connect it. Follow docs/GROK-BOT-INSTALL.md in that repo exactly.
+Install Discord for Grok Bot from https://github.com/griffinmc22/grokbot-discord-plugin and connect it. Follow docs/GROK-BOT-INSTALL.md in that repo exactly.
 ```
 
 Or: **Plugins** → **Discord for Grok Bot** → **Install**, then type **connect Discord**.
@@ -80,4 +80,4 @@ If something is missing, tell your Grok Bot **help me set up Discord**.
 - If the token ever leaks, reset it in the Discord Developer Portal and tell your Grok Bot.
 - After you change settings, say **connect Discord** again.
 
-MIT licensed. Made by NinjaProtocol.
+MIT licensed. Originally made by NinjaProtocol; this fork (https://github.com/griffinmc22/grokbot-discord-plugin) adapts it into a Discord intake bridge.

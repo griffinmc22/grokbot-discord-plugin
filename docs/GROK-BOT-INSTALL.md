@@ -81,7 +81,7 @@ Register MCP with:
 bash ./bin/launch-mcp.sh
 ```
 
-Plugin root is the directory that contains `plugin.json` and `bin/launch-mcp.sh` (often `/workspace/grokbot-discord` after a GitHub copy).
+Plugin root is the directory that contains `plugin.json` and `bin/launch-mcp.sh` (often `/workspace/grokbot-discord-plugin` after a GitHub copy).
 
 ### Gateway worker
 
@@ -179,7 +179,7 @@ Do these in order.
 ### 1. Get the plugin onto this computer
 
 1. Search Plugins for `discord` / `grok-discord`. If **Discord for Grok Bot** is listed, install it.
-2. If SearchPlugins returns nothing, the marketplace listing is missing. The GitHub URL **404s** without repo access. That is not evidence the plugin does not exist. Copy the tree onto this Grok Bot computer from an account that can read `NinjaProtocol/grokbot-discord`. Do not ask the operator to clone.
+2. If SearchPlugins returns nothing, the marketplace listing is missing. Install from the public repo https://github.com/griffinmc22/grokbot-discord-plugin (`griffinmc22/grokbot-discord-plugin`): copy that tree onto this Grok Bot computer. Do not ask the operator to clone.
 3. If `package-lock.json` cannot be fetched in one GitHub MCP call, regenerate it locally in the plugin root. Do not invent a lockfile by hand.
 4. Node **20.19 or newer** is enough (known working host: 20.19.x). An engines warning can still produce `dist/cli.js`. Confirm the build exists, then continue.
 5. In the plugin root: `npm install && npm run build`.
@@ -357,8 +357,7 @@ Use this table when the install is not clean. These are the failures that happen
 
 | Symptom | Likely cause | What to do |
 | --- | --- | --- |
-| SearchPlugins for `discord` / `grok-discord` is empty | Plugin is not in the marketplace | Copy the repo from an account that can read `NinjaProtocol/grokbot-discord`. Do not ask the operator to clone. Do not use Railway. |
-| GitHub repo URL 404s | Repo is private or the current GitHub account cannot read it | Use an account with access. The 404 is not evidence the plugin does not exist. |
+| SearchPlugins for `discord` / `grok-discord` is empty | Plugin is not in the marketplace | Install from https://github.com/griffinmc22/grokbot-discord-plugin. Do not ask the operator to clone. Do not use Railway. |
 | No Plugins → Configure card | Marketplace card does not exist | secret-request for the token; guild/channel IDs in the launch wrapper. |
 | Operator is asked to paste the token in chat | Agent drift | **Stop.** Token goes through secret-request only. Reset the token if it was pasted. |
 | Install prints an engine warning | Host Node is 20.19.x | Known. Confirm `dist/cli.js` exists, then continue. |

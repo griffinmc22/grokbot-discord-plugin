@@ -13,7 +13,7 @@ Node **20.19 or newer** is enough. An engines warning on older published floors 
 
 ## 1. Plugin install and variables
 
-Try **Plugins** → **Discord for Grok Bot** (`grok-discord`). If SearchPlugins for `discord` / `grok-discord` is empty, the marketplace listing is missing. An installer with GitHub access copies the tree onto this Grok Bot computer. Do not treat a public GitHub 404 as “the plugin does not exist.”
+Try **Plugins** → **Discord for Grok Bot** (`grok-discord`). If SearchPlugins for `discord` / `grok-discord` is empty, the marketplace listing is missing. Install from https://github.com/griffinmc22/grokbot-discord-plugin: copy that tree onto this Grok Bot computer.
 
 If the plugin root is not built yet, run `npm install && npm run build` there once. If `package-lock.json` cannot be fetched in one call, regenerate it locally. Register MCP with the launch wrapper, not a raw MCP entry until env is loaded:
 

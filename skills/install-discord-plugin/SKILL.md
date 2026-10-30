@@ -26,7 +26,7 @@ Then run `setup-discord-app` and `connect-grok-bot`. Chat rules are in `discord-
 
 ## Do
 
-1. Marketplace install if listed; otherwise copy this repo onto the Grok Bot computer from an account that can read it.
+1. Marketplace install if listed; otherwise copy https://github.com/griffinmc22/grokbot-discord-plugin onto the Grok Bot computer.
 2. `npm install && npm run build` in the plugin root. Node 20.19+ is enough. Register MCP with `bash ./bin/launch-mcp.sh`.
 3. Walk the human through Discord keys. Mandatory channel-level overwrites on the **bot’s own role**.
 4. Persist token via secret-request (or Plugins → Configure if that card exists). Guild and channel IDs in launch-wrapper env, not the repo.
