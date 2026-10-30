@@ -19,7 +19,7 @@ This plugin is Discord I/O only. Use the MCP tools. Do not invent a second Gatew
 - `discord_ensure_worker` — start the sidecar if down; no-op if up. Never opens a Gateway inside MCP.
 - `discord_restart_worker` — stop the live supervisor if up, then start one replica with the current env. Use after webhook URL or channel list changes.
 
-Every tool refuses guilds and channels outside `DISCORD_GUILD_ID` / `DISCORD_CHANNEL_IDS`. Channel, message, and user IDs must be Discord snowflakes. Reaction emoji must be unicode or `name:id`.
+Every tool refuses guilds and channels outside `DISCORD_GUILD_ID` / `DISCORD_CHANNEL_IDS` / `DISCORD_CATEGORY_IDS`. Channel, message, and user IDs must be Discord snowflakes. Reaction emoji must be unicode or `name:id`.
 
 ## What to post
 

@@ -14,7 +14,7 @@ Do not write tokens, webhook keys, or connector-secret paths into chat, Discord,
 2. Do **not** ask the operator to paste `DISCORD_TOKEN` in chat or Discord. Use a **secret-request**. If it was pasted, tell them to reset the token, then secret-request the new value.
 3. Do **not** use Railway. The gateway worker runs on this Grok Bot computer.
 4. Never Administrator. Never two Gateways on one token. Never open a Discord Gateway inside MCP. Never start a thread. Never echo secrets.
-5. One guild (`DISCORD_GUILD_ID`). Only the parent channels in `DISCORD_CHANNEL_IDS`. DMs stay quiet.
+5. One guild (`DISCORD_GUILD_ID`). Only the parent channels in `DISCORD_CHANNEL_IDS` or in a category in `DISCORD_CATEGORY_IDS`. DMs stay quiet.
 6. MCP is REST only. Never invent a second listener.
 7. Do not commit `.env` or `.runtime-webhook.env`. Do not bake one guild’s IDs or secret paths into shipped files.
 
@@ -70,7 +70,7 @@ MCP is the agent’s tool surface. It talks to Discord over REST. It supervises 
 | `discord_ensure_worker` | Start the sidecar if down; **no-op** if the supervisor is already alive. Never opens a Gateway inside MCP. |
 | `discord_restart_worker` | Stop the live supervisor if up, then start one replica with the current env. Use after webhook URL or channel list changes. |
 
-Every tool refuses guilds and channels outside `DISCORD_GUILD_ID` / `DISCORD_CHANNEL_IDS`. Channel, message, and user IDs must be Discord snowflakes.
+Every tool refuses guilds and channels outside `DISCORD_GUILD_ID` / `DISCORD_CHANNEL_IDS` / `DISCORD_CATEGORY_IDS`. Channel, message, and user IDs must be Discord snowflakes.
 
 Register MCP with:
 
@@ -90,7 +90,7 @@ Fail-closed before any webhook or reply:
 - message is a webhook
 - no guild (DMs)
 - guild is not `DISCORD_GUILD_ID`
-- parent channel is not in `DISCORD_CHANNEL_IDS`
+- parent channel is not in `DISCORD_CHANNEL_IDS`, and its category is not in `DISCORD_CATEGORY_IDS`
 
 - author is not in `DISCORD_ALLOWED_USER_IDS` (when set; required in intake mode, the default)
 
@@ -199,7 +199,8 @@ Walk the operator through this (also in `setup-discord-app`):
 | --- | --- |
 | `DISCORD_TOKEN` | connector-secrets, via **secret-request**. Launch wrapper reads `DISCORD_TOKEN` or `DISCORD_TOKEN_FILE`. |
 | `DISCORD_GUILD_ID` | launch wrapper / local `.env`. Not the repo. |
-| `DISCORD_CHANNEL_IDS` | same. Parent channel snowflakes only. |
+| `DISCORD_CHANNEL_IDS` | same. Parent channel snowflakes only. Optional if `DISCORD_CATEGORY_IDS` is set; at least one is required. |
+| `DISCORD_CATEGORY_IDS` | same. Optional category snowflakes; every text channel in them (and its threads) is allowed. |
 | `DISCORD_ALLOWED_USER_IDS` | launch wrapper / local `.env`. Comma-separated user snowflakes. Required in intake mode (default); the worker refuses to start without it. |
 | `DISCORD_INTAKE_MODE` | optional, default `true`. `false` restores mention/name-driven chat. |
 | `BOT_NAME_PREFIX` | optional spoken name. Whole-word match anywhere (chat mode only). |
@@ -254,7 +255,7 @@ Three layers. The gateway filter is not always right. The inbound routine must s
 
 ### Fail-closed before directed
 
-Dropped entirely: bots, webhooks, DMs, wrong guild, parent channel not in `DISCORD_CHANNEL_IDS`, or (if roles are set) a member without an allowed role.
+Dropped entirely: bots, webhooks, DMs, wrong guild, parent channel not in `DISCORD_CHANNEL_IDS` (and not in a `DISCORD_CATEGORY_IDS` category), or (if roles are set) a member without an allowed role.
 
 ### Directed
 

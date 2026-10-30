@@ -12,7 +12,7 @@ any Discord message ──Forward──▶ #inbox (+ your note)
                      discord_reply ──▶ confirmation under your message in #inbox
 ```
 
-Intake mode is the default (`DISCORD_INTAKE_MODE=true`). Every message from an allowed user in an allowlisted channel goes to the routine. You don't need to @mention the bot, use its name, or reply to it. Messages from anyone not in `DISCORD_ALLOWED_USER_IDS` are ignored, and the worker refuses to start if that list is empty.
+Intake mode is the default (`DISCORD_INTAKE_MODE=true`). Every message from an allowed user in an allowlisted channel (`DISCORD_CHANNEL_IDS`, or any text channel in a `DISCORD_CATEGORY_IDS` category, including threads) goes to the routine. You don't need to @mention the bot, use its name, or reply to it. Messages from anyone not in `DISCORD_ALLOWED_USER_IDS` are ignored, and the worker refuses to start if that list is empty.
 
 ## 1. Create the Discord application and bot
 
@@ -30,6 +30,8 @@ Intake mode is the default (`DISCORD_INTAKE_MODE=true`). Every message from an a
 
 ## 3. Make a private `#inbox` channel
 
+(Or a private category holding several intake channels, e.g. `#inbox`, `#calendar`, `#research`. List the category in `DISCORD_CATEGORY_IDS` and every text channel in it, plus threads in those channels, is handled. Voice-channel chat and forum posts in the category are ignored.)
+
 1. Create a text channel, e.g. `#inbox`. In **Permissions**, make it private (deny `@everyone` View Channel).
 2. Add **yourself** and the **bot's own role** with View Channel, Send Messages, and Read Message History as channel overrides. Discord returns 50013 Missing Permissions if the bot only gets these through a server-wide role.
 
@@ -41,6 +43,7 @@ Turn on **User Settings → Advanced → Developer Mode**, then:
 | --- | --- | --- |
 | Server name | Server ID | `DISCORD_GUILD_ID` |
 | `#inbox` | Channel ID | `DISCORD_CHANNEL_IDS` (comma-separate if more than one) |
+| A category (optional) | Category ID | `DISCORD_CATEGORY_IDS`: every text channel in it, and threads in those channels, counts as an intake channel |
 | Your own name/avatar | User ID | `DISCORD_ALLOWED_USER_IDS` (comma-separate to allow more people) |
 
 ## 5. Create the webhook routine in Grok Bot
@@ -55,7 +58,8 @@ The routine needs the `grok-discord` MCP tools (from this plugin) so it can repl
 | --- | --- | --- |
 | `DISCORD_TOKEN` | yes | Bot token (step 1). Secret. |
 | `DISCORD_GUILD_ID` | yes | Server ID |
-| `DISCORD_CHANNEL_IDS` | yes | `#inbox` channel ID(s) |
+| `DISCORD_CHANNEL_IDS` | one of these two | `#inbox` channel ID(s) |
+| `DISCORD_CATEGORY_IDS` | one of these two | Category ID(s). Any text channel in them (and its threads) is allowed. |
 | `DISCORD_ALLOWED_USER_IDS` | yes | Your Discord user ID(s). Required in intake mode. |
 | `GROK_WEBHOOK_URL` | yes | Webhook URL from the routine panel (public HTTPS) |
 | `GROK_WEBHOOK_SECRET` | yes | Webhook key from the routine panel. Secret. |

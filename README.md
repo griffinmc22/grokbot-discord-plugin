@@ -47,6 +47,18 @@ In each Discord channel the bot should use, give it those same channel permissio
 1. In Discord: **User Settings** → **Advanced** → turn **Developer Mode** on.
 2. Right-click the **server name** → **Copy Server ID**. That is `DISCORD_GUILD_ID`.
 3. Right-click each text channel the bot may use → **Copy Channel ID**. If there is more than one, put them in a list separated by commas. That is `DISCORD_CHANNEL_IDS`.
+4. Optional: to allow every text channel in a category (and threads in those channels), right-click the **category** → **Copy Category ID** and list them, comma-separated, as `DISCORD_CATEGORY_IDS`. Set at least one of `DISCORD_CHANNEL_IDS` or `DISCORD_CATEGORY_IDS`.
+
+| Env var | Required | What |
+| --- | --- | --- |
+| `DISCORD_TOKEN` | yes | Bot token |
+| `DISCORD_GUILD_ID` | yes | Server ID |
+| `DISCORD_CHANNEL_IDS` | one of these two | Comma-separated text channel IDs |
+| `DISCORD_CATEGORY_IDS` | one of these two | Comma-separated category IDs; every text channel under them is allowed |
+| `DISCORD_ALLOWED_USER_IDS` | yes in intake mode | Comma-separated user IDs that may use the bot |
+| `DISCORD_INTAKE_MODE` | no | Default `true`; `false` for mention-driven chat |
+| `DISCORD_ALLOWED_ROLE_IDS` | no | Extra role check |
+| `GROK_WEBHOOK_URL` / `GROK_WEBHOOK_SECRET` | for inbound | Webhook URL and key from the Grok Bot routine panel |
 
 ## 3. Save those values in Grok Bot
 
