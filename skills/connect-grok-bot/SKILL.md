@@ -28,33 +28,21 @@ bash ./bin/launch-mcp.sh
 | `DISCORD_TOKEN` | connector-secrets, via **secret-request**. The launch wrapper reads it at start (`DISCORD_TOKEN` or `DISCORD_TOKEN_FILE`). Never paste it in chat. |
 | `DISCORD_GUILD_ID` | launch wrapper / local `.env`. Do not ship one guild’s IDs in the repo. |
 | `DISCORD_CHANNEL_IDS` | same. Parent channel snowflakes only. |
-| `BOT_NAME_PREFIX` | optional spoken name (whole-word anywhere). |
-| `DISCORD_ALLOWED_ROLE_IDS` | optional. Empty = anyone in an allowlisted channel. |
-| `GROK_WEBHOOK_URL` and `GROK_WEBHOOK_SECRET` | runtime env on this computer (gateway process). Built below. Do not commit `.runtime-webhook.env`. |
+| `DISCORD_ALLOWED_USER_IDS` | same. Comma-separated user snowflakes. Required in intake mode (default); the worker refuses to start without it. |
+| `DISCORD_INTAKE_MODE` | optional, default `true`. `false` restores mention/name-driven chat. |
+| `BOT_NAME_PREFIX` | optional spoken name (whole-word anywhere, chat mode only). |
+| `DISCORD_ALLOWED_ROLE_IDS` | optional extra role check. Empty = no role check. |
+| `GROK_WEBHOOK_URL` and `GROK_WEBHOOK_SECRET` | runtime env on this computer (gateway process). Copied from the routine panel below. Never commit them. |
 
-Unexpanded `${VAR}` placeholders are ignored. Webhook URLs must pass the plugin SSRF rules (HTTPS, no credentials, no private/metadata hosts, DNS pinned, no redirects). Loopback HTTP is allowed for the optional forwarder fallback.
+Unexpanded `${VAR}` placeholders are ignored. Webhook URLs must pass the plugin SSRF rules (HTTPS, no credentials, no private/metadata hosts, DNS pinned, no redirects). Loopback HTTP is allowed only for local tests.
 
 ## 2. Create one inbound webhook routine
 
-Create **one** Grok Bot routine with a **webhook** trigger. Do not create extra inbound routines so the user can copy a URL or key from a panel. The agent never usefully sees that panel key.
+Create **one** webhook routine in the Grok Bot app, copy its webhook URL and key from the routine panel into `GROK_WEBHOOK_URL` and `GROK_WEBHOOK_SECRET` on the **gateway** env.
 
-Build the host URL on this Grok Bot computer:
+In intake mode (the default) use the routine prompt in `docs/INTAKE-BRIDGE.md` instead of the chat prompt below.
 
-```
-https://api2.cursor.sh/automations/webhook/<automationId>
-```
-
-`automationId` is the stable UUID from `sha256(agentId NUL routineFolder)`. Pair it with the sender key already on disk (`webhook-keys.json`). Put that HTTPS URL in `GROK_WEBHOOK_URL` and the sender key in `GROK_WEBHOOK_SECRET` on the **gateway** env.
-
-Direct HTTPS is the default. If the gateway log shows `Invalid IP address: undefined`, use the loopback fallback:
-
-- `GROK_WEBHOOK_URL=http://127.0.0.1:8787/`
-- `GROK_WEBHOOK_UPSTREAM` = the real api2 automations URL
-- same `GROK_WEBHOOK_SECRET`
-
-`bin/with-env.sh` starts `bin/webhook-forward.mjs` when 127.0.0.1:8787 is down. The forwarder copies `Authorization` and `X-Grok-Signature`. Do not disable the SSRF DNS pin.
-
-Put this prompt on the inbound routine:
+In chat mode (`DISCORD_INTAKE_MODE=false`), put this prompt on the inbound routine:
 
 ```
 You are answering Discord through the grok-discord MCP tools only.
@@ -66,8 +54,10 @@ That decision is not always right. You must still choose SILENCE.
 
 Parse the JSON body:
   message_id, channel_id, guild_id, parent_channel_id,
-  author_id, author_username, content, is_reply,
-  referenced_message_id
+  author_id, author_username, content, content_full, is_forward,
+  forwarded, embeds, attachments, is_reply, referenced_message_id
+  (content_full has the note plus any forwarded text, embeds, and
+  attachment URLs in one block)
 
 1. Call discord_history on parent_channel_id for recent context.
    Reply in the parent channel even if the event came from a thread.
