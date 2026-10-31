@@ -24,10 +24,14 @@ import { deliverOutbound } from "./outbound.ts";
 
 export type ResolvedChannel = {
   id: string;
-  guildId: string;
+  /** Null for DM channels. */
+  guildId: string | null;
+  /** The parent text channel; for DMs, the DM channel itself. */
   parentChannelId: string;
   /** Category (parent_id) of the parent text channel; null if none or not looked up. */
   categoryId: string | null;
+  /** DM recipients (user ids) for DM channels; null for guild channels. */
+  dmRecipientIds: string[] | null;
   inThread: boolean;
   name: string;
   type: number;
@@ -70,6 +74,22 @@ export function createDiscordRest(config: ConnectorConfig, rest = new REST({ ver
 
   async function resolveChannel(channelId: string): Promise<ResolvedChannel> {
     const channel = await fetchChannel(assertSnowflake(channelId, "channel_id"));
+
+    // 1:1 DM with the bot. Allowed later only if a recipient is an allowed user.
+    if (channel.type === ChannelType.DM) {
+      const recipients = "recipients" in channel ? (channel.recipients ?? []) : [];
+      return {
+        id: channel.id,
+        guildId: null,
+        parentChannelId: channel.id,
+        categoryId: null,
+        dmRecipientIds: recipients.map((user) => user.id),
+        inThread: false,
+        name: "DM",
+        type: channel.type,
+      };
+    }
+
     const guildId = "guild_id" in channel ? channel.guild_id : undefined;
     if (!guildId) {
       throw new Error("Channel is outside the configured Discord allowlist.");
@@ -86,6 +106,7 @@ export function createDiscordRest(config: ConnectorConfig, rest = new REST({ ver
         guildId,
         parentChannelId: parentId,
         categoryId: await threadParentCategory(parentId),
+        dmRecipientIds: null,
         inThread: true,
         name: channel.name ?? channel.id,
         type: channel.type,
@@ -101,6 +122,7 @@ export function createDiscordRest(config: ConnectorConfig, rest = new REST({ ver
       guildId,
       parentChannelId: channel.id,
       categoryId: ("parent_id" in channel ? channel.parent_id : null) ?? null,
+      dmRecipientIds: null,
       inThread: false,
       name: "name" in channel && channel.name ? channel.name : channel.id,
       type: channel.type,
@@ -109,7 +131,13 @@ export function createDiscordRest(config: ConnectorConfig, rest = new REST({ ver
 
   async function assertResolved(channelId: string): Promise<ResolvedChannel> {
     const resolved = await resolveChannel(channelId);
-    assertChannelAllowed(config, resolved.guildId, resolved.parentChannelId, resolved.categoryId);
+    assertChannelAllowed(
+      config,
+      resolved.guildId,
+      resolved.parentChannelId,
+      resolved.categoryId,
+      resolved.dmRecipientIds,
+    );
     return resolved;
   }
 
@@ -229,6 +257,7 @@ export function createDiscordRest(config: ConnectorConfig, rest = new REST({ ver
         guildId: resolved.guildId,
         parentChannelId: resolved.parentChannelId,
         categoryId: resolved.categoryId,
+        dmRecipientIds: resolved.dmRecipientIds,
         inThread: false,
         text,
         async post(chunk) {
@@ -250,6 +279,7 @@ export function createDiscordRest(config: ConnectorConfig, rest = new REST({ ver
         guildId: resolved.guildId,
         parentChannelId: resolved.parentChannelId,
         categoryId: resolved.categoryId,
+        dmRecipientIds: resolved.dmRecipientIds,
         inThread: resolved.inThread,
         replyToMessageId: replyTo,
         text,

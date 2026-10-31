@@ -18,6 +18,9 @@ const threadId = "700000000000000003";
 const forumId = "700000000000000004";
 const forumPostId = "700000000000000005";
 const messageId = "900000000000000001";
+const strangerId = "444444444444444444";
+const ownerDmId = "710000000000000001";
+const strangerDmId = "710000000000000002";
 
 const channels: Record<string, Record<string, unknown>> = {
   [listedChannelId]: { id: listedChannelId, guild_id: guildId, type: ChannelType.GuildText, name: "listed", parent_id: null },
@@ -38,11 +41,14 @@ const channels: Record<string, Record<string, unknown>> = {
   [threadId]: { id: threadId, guild_id: guildId, type: ChannelType.PublicThread, name: "inbox-thread", parent_id: categoryChannelId },
   [forumId]: { id: forumId, guild_id: guildId, type: ChannelType.GuildForum, name: "forum", parent_id: inboxCategoryId },
   [forumPostId]: { id: forumPostId, guild_id: guildId, type: ChannelType.PublicThread, name: "post", parent_id: forumId },
+  [ownerDmId]: { id: ownerDmId, type: ChannelType.DM, recipients: [{ id: ownerId, username: "owner" }] },
+  [strangerDmId]: { id: strangerDmId, type: ChannelType.DM, recipients: [{ id: strangerId, username: "stranger" }] },
 };
 
 function createFakeRest() {
   const gets: string[] = [];
   const posts: { route: string; body: Record<string, unknown> }[] = [];
+  const puts: string[] = [];
   let nextId = 800000000000000000n;
 
   const rest = {
@@ -57,7 +63,9 @@ function createFakeRest() {
       }
       if (route === Routes.guildChannels(guildId)) {
         // The guild channel list never includes threads; the forum under the inbox category must be skipped.
-        return Object.values(channels).filter((channel) => channel.type !== ChannelType.PublicThread);
+        return Object.values(channels).filter(
+          (channel) => channel.guild_id === guildId && channel.type !== ChannelType.PublicThread,
+        );
       }
       const messagesMatch = /^\/channels\/(\d+)\/messages$/.exec(route);
       if (messagesMatch) {
@@ -74,6 +82,9 @@ function createFakeRest() {
       }
       throw new Error(`unexpected GET ${route}`);
     },
+    async put(route: string) {
+      puts.push(route);
+    },
     async post(route: string, options: { body: Record<string, unknown> }) {
       posts.push({ route, body: options.body });
       nextId += 1n;
@@ -81,7 +92,7 @@ function createFakeRest() {
     },
   } as unknown as REST;
 
-  return { rest, gets, posts };
+  return { rest, gets, posts, puts };
 }
 
 function categoryConfig(overrides: Partial<ConnectorConfig> = {}): ConnectorConfig {
@@ -93,6 +104,7 @@ function categoryConfig(overrides: Partial<ConnectorConfig> = {}): ConnectorConf
     discordAllowedRoleIds: [],
     discordAllowedUserIds: [ownerId],
     intakeMode: true,
+    dmIntake: true,
     rateWindowMs: 1000,
     ratePerUser: 6,
     ratePerChannel: 15,
@@ -163,5 +175,46 @@ describe("discord REST with DISCORD_CATEGORY_IDS", () => {
       listed.map((channel) => channel.id),
       [listedChannelId, categoryChannelId],
     );
+  });
+});
+
+describe("discord REST with DM channels", () => {
+  it("allows send, reply, history, and react in an allowed user's DM channel", async () => {
+    const fake = createFakeRest();
+    const discord = createDiscordRest(categoryConfig(), fake.rest);
+
+    const resolved = await discord.assertResolved(ownerDmId);
+    assert.equal(resolved.guildId, null);
+    assert.deepEqual(resolved.dmRecipientIds, [ownerId]);
+
+    const replied = await discord.reply(ownerDmId, messageId, "Added: Dentist, Tue 3pm.");
+    assert.equal(replied.posted, true);
+    assert.equal(replied.channelId, ownerDmId);
+    assert.equal(fake.posts[0]?.route, Routes.channelMessages(ownerDmId));
+    assert.deepEqual(fake.posts[0]?.body.message_reference, { message_id: messageId, fail_if_not_exists: false });
+
+    await discord.send(ownerDmId, "Also added the follow-up.");
+    assert.equal(fake.posts[1]?.route, Routes.channelMessages(ownerDmId));
+
+    const history = await discord.history(ownerDmId);
+    assert.deepEqual(history.lines, ["owner: note [Forwarded message] forwarded event"]);
+
+    await discord.react(ownerDmId, messageId, "✅");
+    assert.deepEqual(fake.puts, [Routes.channelMessageOwnReaction(ownerDmId, messageId, "✅")]);
+  });
+
+  it("rejects DMs with anyone else, and every DM when DM intake is off", async () => {
+    const fake = createFakeRest();
+    const strict = createDiscordRest(categoryConfig(), fake.rest);
+    await assert.rejects(strict.send(strangerDmId, "hi"), /allowlist/);
+    await assert.rejects(strict.reply(strangerDmId, messageId, "hi"), /allowlist/);
+    await assert.rejects(strict.history(strangerDmId), /allowlist/);
+    await assert.rejects(strict.react(strangerDmId, messageId, "✅"), /allowlist/);
+
+    const off = createDiscordRest(categoryConfig({ dmIntake: false }), fake.rest);
+    await assert.rejects(off.send(ownerDmId, "hi"), /allowlist/);
+
+    assert.deepEqual(fake.posts, []);
+    assert.deepEqual(fake.puts, []);
   });
 });
