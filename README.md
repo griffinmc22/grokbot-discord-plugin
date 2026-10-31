@@ -59,6 +59,8 @@ In each Discord channel the bot should use, give it those same channel permissio
 | `DISCORD_INTAKE_MODE` | no | Default `true`: allowed users only, and channels need an @mention or a reply to the bot. `false` = legacy chat mode |
 | `DISCORD_DM_INTAKE` | no | Default `true`: every DM from an allowed user is forwarded, no mention. `false` = ignore DMs |
 | `DISCORD_ALLOWED_ROLE_IDS` | no | Extra role check (guild channels only) |
+| `DISCORD_ACK_EMOJI` | no | Reaction added the moment a message is accepted. Unset = 👀; `none`/`off` (or set to empty) = no reaction |
+| `DISCORD_ERROR_EMOJI` | no | Reaction added if forwarding fails. Unset = ⚠️; `none`/`off` (or set to empty) = no reaction |
 | `GROK_WEBHOOK_URL` / `GROK_WEBHOOK_SECRET` | for inbound | Webhook URL and key from the Grok Bot routine panel |
 
 ## 3. Save those values in Grok Bot

@@ -46,7 +46,7 @@ The gateway subscribes to Guilds, GuildMessages, MessageContent, and DirectMessa
 ## 2. Invite the bot
 
 1. **OAuth2** → **URL Generator** → scope **bot** only.
-2. Bot permissions: **View Channels**, **Send Messages**, **Read Message History**. Add **Add Reactions** only if your routine uses `discord_react`. Never grant Administrator.
+2. Bot permissions: **View Channels**, **Send Messages**, **Read Message History**, **Add Reactions**. Add Reactions and Read Message History are needed for the instant 👀 acknowledgement (see [Reactions](#reactions)). Never grant Administrator.
 3. Open the generated URL and add the bot to your server.
 
 To DM the bot, open its profile in that server → **Message**. If Discord blocks the DM, enable **Allow direct messages from server members** for that server in your privacy settings.
@@ -56,7 +56,7 @@ To DM the bot, open its profile in that server → **Message**. If Discord block
 The config still needs at least one guild channel or category.
 
 1. Create a text channel, e.g. `#inbox`. In **Permissions**, make it private (deny `@everyone` View Channel).
-2. Add **yourself** and the **bot's own role** with View Channel, Send Messages, and Read Message History as channel overrides. Discord returns 50013 Missing Permissions if the bot only gets these through a server-wide role.
+2. Add **yourself** and the **bot's own role** with View Channel, Send Messages, Read Message History, and Add Reactions as channel overrides. Discord returns 50013 Missing Permissions if the bot only gets these through a server-wide role.
 
 Or use a private category holding several intake channels (`#inbox`, `#calendar`, `#research`) and list the category in `DISCORD_CATEGORY_IDS`. Every text channel in it, plus threads in those channels, is in scope. Voice-channel chat and forum posts in the category are ignored.
 
@@ -90,6 +90,8 @@ The routine needs the `grok-discord` MCP tools (from this plugin) so it can repl
 | `GROK_WEBHOOK_SECRET` | yes | Webhook key from the routine panel. Secret. |
 | `DISCORD_INTAKE_MODE` | no | Default `true`: allowed users only, and guild channels need an @mention or a reply to the bot. `false` = legacy chat mode. |
 | `DISCORD_DM_INTAKE` | no | Default `true`: every DM from an allowed user is forwarded. `false` = ignore all DMs. |
+| `DISCORD_ACK_EMOJI` | no | Unset = 👀. Reaction added the moment a message is accepted. `none`/`off`, or an explicitly empty value, disables it. |
+| `DISCORD_ERROR_EMOJI` | no | Unset = ⚠️. Reaction added if forwarding fails. Same disable rules. |
 | `DISCORD_ALLOWED_ROLE_IDS` | no | Extra role check in guild channels, on top of the user allowlist |
 
 Put them in `.env` in the plugin root (it is git-ignored; see `.env.example`) or in the Grok Bot launch-wrapper env. Never commit them.
@@ -113,6 +115,17 @@ grok-discord ready as YourBot#1234; one replica per bot token
 grok-discord intake mode: 1 allowed user(s); guild channels (1 channel(s), 0 category(ies)) need an @mention or a reply to the bot
 grok-discord DM intake on: every DM from an allowed user is forwarded
 ```
+
+## Reactions
+
+As soon as a message passes every check (allowed user, channel/category or DM, mention or reply, role, rate limit), the gateway reacts with `DISCORD_ACK_EMOJI` (default 👀). That way you know it was picked up before the routine replies. The reaction runs alongside the webhook POST and never delays or blocks it. Messages the gateway ignores, or drops for rate limiting, get no reaction.
+
+If forwarding fails, the gateway removes the 👀 when it can and adds `DISCORD_ERROR_EMOJI` (default ⚠️), on top of the usual public error reply.
+
+- Values: a unicode emoji, a custom emoji as `name:id` or `<:name:id>` (the bot must be in that emoji's server), or `none` / `off` (also `false`, `no`, `0`, `disabled`) to turn it off. An explicitly empty value (`DISCORD_ACK_EMOJI=`) also turns it off. Leaving the variable unset keeps the default, which is why `.env.example` has these lines commented out.
+- Permissions: in guild channels the bot needs **Add Reactions** and **Read Message History** in that channel. DMs need nothing extra.
+- Failures are best-effort and logged as one line, e.g. `grok-discord ack reaction failed: 50013 Missing Permissions` (missing Add Reactions) or `grok-discord ack reaction failed: timed out after 3000ms`. Forwarding still happens.
+- Set these in `.env` or the gateway/launch-wrapper env. They are deliberately not mapped in `mcp.json`: a host that expands an unset `${DISCORD_ACK_EMOJI}` to an empty string would silently turn reactions off.
 
 ## Payload
 

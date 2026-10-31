@@ -32,6 +32,7 @@ bash ./bin/launch-mcp.sh
 | `DISCORD_ALLOWED_USER_IDS` | same. Comma-separated user snowflakes. Required in intake mode (default); the worker refuses to start without it. |
 | `DISCORD_INTAKE_MODE` | optional, default `true`: allowed users only; channels need an @mention or a reply to the bot. `false` = legacy chat mode. |
 | `DISCORD_DM_INTAKE` | optional, default `true`: every DM from an allowed user is forwarded. `false` = ignore DMs. |
+| `DISCORD_ACK_EMOJI` / `DISCORD_ERROR_EMOJI` | optional, `.env` / gateway env only. Unset = 👀 / ⚠️ reactions; `none`/`off` or an explicitly empty value disables. |
 | `BOT_NAME_PREFIX` | optional spoken name (whole-word anywhere, chat mode only). |
 | `DISCORD_ALLOWED_ROLE_IDS` | optional extra role check. Empty = no role check. |
 | `GROK_WEBHOOK_URL` and `GROK_WEBHOOK_SECRET` | runtime env on this computer (gateway process). Copied from the routine panel below. Never commit them. |

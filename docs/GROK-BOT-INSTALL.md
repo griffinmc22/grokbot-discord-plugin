@@ -207,6 +207,7 @@ Walk the operator through this (also in `setup-discord-app`):
 | `DISCORD_ALLOWED_USER_IDS` | launch wrapper / local `.env`. Comma-separated user snowflakes. Required in intake mode (default); the worker refuses to start without it. |
 | `DISCORD_INTAKE_MODE` | optional, default `true`: allowed users only; channels need an @mention or a reply to the bot. `false` = legacy chat mode. |
 | `DISCORD_DM_INTAKE` | optional, default `true`: every DM from an allowed user is forwarded. `false` = ignore DMs. |
+| `DISCORD_ACK_EMOJI` / `DISCORD_ERROR_EMOJI` | optional, `.env` / gateway env only (not `mcp.json`). Unset = 👀 / ⚠️; `none`/`off` or an explicitly empty value disables. Needs Add Reactions in the channel. |
 | `BOT_NAME_PREFIX` | optional spoken name. Whole-word match anywhere (chat mode only). |
 | `DISCORD_ALLOWED_ROLE_IDS` | optional extra role check on top of the user allowlist. Empty = no role check. |
 | `GROK_WEBHOOK_URL` and `GROK_WEBHOOK_SECRET` | gateway process env on this computer. Copied from the routine panel (below). Never commit them. |
@@ -373,6 +374,7 @@ Use this table when the install is not clean. These are the failures that happen
 | After a SILENCE, later ambient lines wake the bot | Follow-up window opened, or `author_id` was omitted on a real reply | Pass `author_id` only on real replies. SILENCE follow-up noise. Window is 15 minutes. `/new` clears it. |
 | Bot talks in the wrong channel | Channel not restricted | Fail-closed on parent channel. Check `DISCORD_CHANNEL_IDS`. |
 | Bot answers a DM from someone not allowlisted | Should be impossible | DMs require the author in `DISCORD_ALLOWED_USER_IDS` and `DISCORD_DM_INTAKE` not false. Stop and inspect the worker env. |
+| Log: `grok-discord ack reaction failed: 50013 Missing Permissions` | Bot lacks Add Reactions (or Read Message History) in that channel | Add them to the bot role's channel overrides. Forwarding still works without the reaction. |
 | DMs to the bot get no reply | DM intake off, author not allowlisted, or worker not restarted after upgrading | Check `DISCORD_DM_INTAKE` and `DISCORD_ALLOWED_USER_IDS`, then `discord_restart_worker`. The boot log says whether DM intake is on. |
 | `discord_history` looks empty of other people | Other users omitted unless they hold an allowed role | Empty `DISCORD_ALLOWED_ROLE_IDS` allows anyone to talk, not to appear as peers in history. |
 | Need to post a screenshot; `discord_send` has no file field | MCP send/reply cannot attach | Raw multipart POST to the channel messages endpoint. Invite needs Attach Files. |
