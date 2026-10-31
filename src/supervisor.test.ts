@@ -22,6 +22,7 @@ const config: ConnectorConfig = {
   discordAllowedRoleIds: [],
   discordAllowedUserIds: ["333333333333333333"],
   intakeMode: true,
+  dmIntake: true,
   rateWindowMs: 1000,
   ratePerUser: 6,
   ratePerChannel: 15,

@@ -1,7 +1,15 @@
 import assert from "node:assert/strict";
 import { describe, it } from "node:test";
 
-import { isDirectedAtBot, memberHasAllowedRole, namesBot, shouldHandle, userIsAllowed } from "./filters.ts";
+import {
+  isDirectedAtBot,
+  memberHasAllowedRole,
+  mentionsBot,
+  namesBot,
+  shouldHandle,
+  stripBotMentions,
+  userIsAllowed,
+} from "./filters.ts";
 
 const allow = {
   configuredGuildId: "guild-1",
@@ -146,14 +154,100 @@ describe("isDirectedAtBot", () => {
   });
 });
 
-describe("isDirectedAtBot in intake mode", () => {
-  it("treats a plain note with no mention, name, reply, or follow-up as directed", () => {
-    const base = { mentionedBot: false, isReplyToBot: false, botNames: ["Grok"], followUp: false };
+describe("isDirectedAtBot in intake mode (guild: mention or reply required)", () => {
+  const base = { intakeMode: true, mentionedBot: false, isReplyToBot: false, botNames: ["Grok"], followUp: false };
 
-    assert.equal(isDirectedAtBot({ ...base, intakeMode: true, content: "dinner with sam friday 7pm" }), true);
-    assert.equal(isDirectedAtBot({ ...base, intakeMode: true, content: "" }), true);
-    assert.equal(isDirectedAtBot({ ...base, intakeMode: false, content: "dinner with sam friday 7pm" }), false);
+  it("accepts a real @mention", () => {
+    assert.equal(isDirectedAtBot({ ...base, mentionedBot: true, content: "add dentist tuesday" }), true);
+  });
+
+  it("accepts a reply to a bot message", () => {
+    assert.equal(isDirectedAtBot({ ...base, isReplyToBot: true, content: "make it 4pm instead" }), true);
+  });
+
+  it("drops plain notes, the bot's name in text, and open follow-up windows", () => {
     assert.equal(isDirectedAtBot({ ...base, content: "dinner with sam friday 7pm" }), false);
+    assert.equal(isDirectedAtBot({ ...base, content: "" }), false);
+    assert.equal(isDirectedAtBot({ ...base, content: "hey grok, add dentist tuesday" }), false);
+    assert.equal(isDirectedAtBot({ ...base, content: "@Grok add dentist" }), false);
+    assert.equal(isDirectedAtBot({ ...base, content: "anything", followUp: true }), false);
+  });
+
+  it("treats every handled DM as directed, with no mention", () => {
+    assert.equal(isDirectedAtBot({ ...base, isDm: true, content: "dinner with sam friday 7pm" }), true);
+    assert.equal(isDirectedAtBot({ ...base, isDm: true, content: "" }), true);
+  });
+
+  it("keeps legacy chat mode name matching when intake mode is off", () => {
+    assert.equal(isDirectedAtBot({ ...base, intakeMode: false, content: "hey grok, add dentist" }), true);
+    assert.equal(isDirectedAtBot({ ...base, intakeMode: false, content: "dinner with sam friday 7pm" }), false);
+  });
+});
+
+describe("shouldHandle DM path", () => {
+  const owner = "333333333333333333";
+  const stranger = "444444444444444444";
+  const dm = {
+    authorIsBot: false,
+    webhookId: null,
+    guildId: null,
+    parentChannelId: "777777777777777777",
+    configuredGuildId: "guild-1",
+    configuredChannelIds: ["chan-1"],
+    isDm: true,
+    authorId: owner,
+    allowedUserIds: [owner],
+    dmIntake: true,
+  };
+
+  it("handles DMs from an allowed user, bypassing the guild/channel allowlist", () => {
+    assert.equal(shouldHandle(dm), true);
+  });
+
+  it("ignores DMs from other users, bots, webhooks, and when DM intake is off", () => {
+    assert.equal(shouldHandle({ ...dm, authorId: stranger }), false);
+    assert.equal(shouldHandle({ ...dm, authorIsBot: true }), false);
+    assert.equal(shouldHandle({ ...dm, webhookId: "hook" }), false);
+    assert.equal(shouldHandle({ ...dm, dmIntake: false }), false);
+  });
+
+  it("fails closed for DMs when the user allowlist is empty", () => {
+    assert.equal(shouldHandle({ ...dm, allowedUserIds: [] }), false);
+    assert.equal(shouldHandle({ ...dm, allowedUserIds: undefined }), false);
+  });
+
+  it("never treats a guild-less message as a guild message", () => {
+    assert.equal(shouldHandle({ ...dm, isDm: false }), false);
+  });
+});
+
+describe("mentionsBot", () => {
+  const botId = "555555555555555555";
+
+  it("matches a direct user mention or the bot's managed role", () => {
+    assert.equal(mentionsBot({ mentionedUserIds: [botId], mentionedRoles: [] }, botId), true);
+    assert.equal(mentionsBot({ mentionedUserIds: [], mentionedRoles: [{ id: "role-1", botId }] }, botId), true);
+  });
+
+  it("ignores other users, ordinary roles, and a missing bot id", () => {
+    assert.equal(mentionsBot({ mentionedUserIds: ["333333333333333333"], mentionedRoles: [] }, botId), false);
+    assert.equal(mentionsBot({ mentionedUserIds: [], mentionedRoles: [{ id: "role-1", botId: null }] }, botId), false);
+    assert.equal(mentionsBot({ mentionedUserIds: [botId], mentionedRoles: [] }, undefined), false);
+  });
+});
+
+describe("stripBotMentions", () => {
+  const botId = "555555555555555555";
+
+  it("removes the bot's user and managed-role mentions and keeps other text and mentions", () => {
+    assert.equal(stripBotMentions(`<@${botId}> add dentist tuesday`, botId), "add dentist tuesday");
+    assert.equal(stripBotMentions(`hey <@!${botId}>  research   this`, botId), "hey research this");
+    assert.equal(stripBotMentions(`<@&666666666666666666> ping`, botId, ["666666666666666666"]), "ping");
+    assert.equal(stripBotMentions(`<@${botId}> invite <@333333333333333333>`, botId), "invite <@333333333333333333>");
+  });
+
+  it("keeps line breaks in multi-line notes", () => {
+    assert.equal(stripBotMentions(`<@${botId}>\nline one\n  line two`, botId), "line one\nline two");
   });
 });
 

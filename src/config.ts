@@ -16,8 +16,17 @@ export type ConnectorConfig = {
   discordAllowedRoleIds: string[];
   /** Only these Discord user IDs are handled. Required when intakeMode is on. */
   discordAllowedUserIds: string[];
-  /** Every allowed user's message in an allowlisted channel is directed; no mention or name needed. */
+  /**
+   * Intake mode (default): allowed users only; in guild channels the bot must be
+   * @mentioned or replied to (no name matching, no follow-up window).
+   * Off: legacy chat mode (mention, reply, bot name, or follow-up).
+   */
   intakeMode: boolean;
+  /**
+   * DM intake (default): every DM to the bot from an allowed user is forwarded
+   * with no mention. DMs are never handled when discordAllowedUserIds is empty.
+   */
+  dmIntake: boolean;
   grokWebhookUrl?: string;
   grokWebhookSecret?: string;
   botNamePrefix?: string;
@@ -206,6 +215,7 @@ export function loadConfig(env: EnvMap = process.env): ConnectorConfig {
     ),
     discordAllowedUserIds,
     intakeMode,
+    dmIntake: parseBooleanEnv("DISCORD_DM_INTAKE", true, env),
     grokWebhookUrl,
     grokWebhookSecret,
     botNamePrefix: parseBotNamePrefix(optionalEnv("BOT_NAME_PREFIX", env)),

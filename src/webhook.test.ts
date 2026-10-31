@@ -1,7 +1,14 @@
 import assert from "node:assert/strict";
 import { describe, it } from "node:test";
 
-import { postGrokWebhook, invokePinnedLookup, sanitizeWebhookPayload, signWebhookBody, webhookHeaders } from "./webhook.ts";
+import {
+  buildWebhookPayload,
+  invokePinnedLookup,
+  postGrokWebhook,
+  sanitizeWebhookPayload,
+  signWebhookBody,
+  webhookHeaders,
+} from "./webhook.ts";
 
 describe("webhook HMAC", () => {
   it("signs the body when a secret is set", () => {
@@ -21,15 +28,73 @@ describe("webhook HMAC", () => {
   });
 });
 
+describe("buildWebhookPayload", () => {
+  const base = {
+    messageId: "1300000000000000001",
+    authorId: "1000000000000000001",
+    authorUsername: "you",
+    content: "add dentist tuesday 3pm",
+    contentOriginal: "@Grok add dentist tuesday 3pm",
+    message: {
+      snapshots: [{ content: "Dentist moved to Tue 3pm", embeds: [], attachments: [] }],
+    },
+    isReply: false,
+    referencedMessageId: null,
+  };
+
+  it("marks DMs: is_dm, dm_channel_id = channel_id, null guild and parent", () => {
+    const payload = buildWebhookPayload({
+      ...base,
+      channelId: "1400000000000000001",
+      guildId: null,
+      parentChannelId: "1400000000000000001",
+      isDm: true,
+    });
+
+    assert.equal(payload.is_dm, true);
+    assert.equal(payload.channel_id, "1400000000000000001");
+    assert.equal(payload.dm_channel_id, "1400000000000000001");
+    assert.equal(payload.guild_id, null);
+    assert.equal(payload.parent_channel_id, null);
+    assert.equal(payload.is_forward, true);
+    assert.equal(payload.content_full, "add dentist tuesday 3pm\n\n[Forwarded message]\nDentist moved to Tue 3pm");
+  });
+
+  it("keeps guild fields, the mention-stripped content, and the original for channel messages", () => {
+    const payload = buildWebhookPayload({
+      ...base,
+      channelId: "1200000000000000002",
+      guildId: "1100000000000000001",
+      parentChannelId: "1200000000000000001",
+      isDm: false,
+      isReply: true,
+      referencedMessageId: "1300000000000000000",
+    });
+
+    assert.equal(payload.is_dm, false);
+    assert.equal(payload.dm_channel_id, null);
+    assert.equal(payload.guild_id, "1100000000000000001");
+    assert.equal(payload.parent_channel_id, "1200000000000000001");
+    assert.equal(payload.channel_id, "1200000000000000002");
+    assert.equal(payload.content, "add dentist tuesday 3pm");
+    assert.equal(payload.content_original, "@Grok add dentist tuesday 3pm");
+    assert.equal(payload.is_reply, true);
+    assert.equal(payload.referenced_message_id, "1300000000000000000");
+  });
+});
+
 describe("postGrokWebhook", () => {
   const payload = {
     message_id: "1",
     channel_id: "2",
     guild_id: "3",
     parent_channel_id: "2",
+    is_dm: false,
+    dm_channel_id: null,
     author_id: "4",
     author_username: "ada",
     content: "hello ghp_abcdefghijklmnopqrstuvwxyz1234567890",
+    content_original: "@Grok hello ghp_abcdefghijklmnopqrstuvwxyz1234567890",
     content_full: "hello ghp_abcdefghijklmnopqrstuvwxyz1234567890\n\n[Forwarded message]\nkey ghp_abcdefghijklmnopqrstuvwxyz0987654321",
     is_forward: true,
     forwarded: [

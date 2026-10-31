@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import { describe, it } from "node:test";
 
-import { assertChannelAllowed, channelIsAllowed } from "./allowlist.ts";
+import { assertChannelAllowed, channelIsAllowed, dmIsAllowed } from "./allowlist.ts";
 import { deliverOutbound } from "./outbound.ts";
 
 const config = {
@@ -103,5 +103,26 @@ describe("category allowlist", () => {
     assert.equal(channelIsAllowed(withCategory, "guild-2", "chan-7", "cat-1"), false);
     assert.equal(channelIsAllowed(config, "guild-1", "chan-7", "cat-1"), false);
     assert.throws(() => assertChannelAllowed(withCategory, "guild-1", "chan-7", "cat-2"), /allowlist/);
+  });
+});
+
+describe("DM allowlist", () => {
+  const dmConfig = { discordGuildId: "guild-1", discordChannelIds: ["chan-1"], discordAllowedUserIds: ["user-1"], dmIntake: true };
+
+  it("allows a DM whose recipients include an allowed user", () => {
+    assert.equal(dmIsAllowed(dmConfig, ["user-1"]), true);
+    assert.doesNotThrow(() => assertChannelAllowed(dmConfig, null, "dm-1", null, ["user-1"]));
+  });
+
+  it("rejects other DMs, DMs with DM intake off, and DMs with no user allowlist", () => {
+    assert.equal(dmIsAllowed(dmConfig, ["user-2"]), false);
+    assert.equal(dmIsAllowed(dmConfig, []), false);
+    assert.equal(dmIsAllowed({ ...dmConfig, dmIntake: false }, ["user-1"]), false);
+    assert.equal(dmIsAllowed({ ...dmConfig, discordAllowedUserIds: [] }, ["user-1"]), false);
+    assert.throws(() => assertChannelAllowed(dmConfig, null, "dm-1", null, ["user-2"]), /allowlist/);
+  });
+
+  it("does not let a DM scope fall through to the guild check", () => {
+    assert.throws(() => assertChannelAllowed(dmConfig, "guild-1", "chan-1", null, ["user-2"]), /allowlist/);
   });
 });

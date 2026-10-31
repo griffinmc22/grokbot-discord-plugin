@@ -84,6 +84,7 @@ describe("discord_history (REST)", () => {
       discordAllowedRoleIds: [],
       discordAllowedUserIds: [ownerId],
       intakeMode: true,
+      dmIntake: true,
       rateWindowMs: 1000,
       ratePerUser: 6,
       ratePerChannel: 15,

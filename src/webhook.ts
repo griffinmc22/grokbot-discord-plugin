@@ -3,7 +3,14 @@ import http from "node:http";
 import https from "node:https";
 
 import { webhookTimeoutMs } from "./constants.ts";
-import type { ExtractedAttachment, ExtractedEmbed, ExtractedForward } from "./message-text.ts";
+import {
+  extractMessage,
+  flattenMessageText,
+  type ExtractedAttachment,
+  type ExtractedEmbed,
+  type ExtractedForward,
+  type MessageInput,
+} from "./message-text.ts";
 import { redactSecrets } from "./redact.ts";
 import { pinWebhookAddress, type AddressLookup, type PinnedAddress } from "./webhook-url.ts";
 
@@ -34,13 +41,21 @@ export function invokePinnedLookup(
 
 export type WebhookPayload = {
   message_id: string;
+  /** Channel the message arrived in; the DM channel id for DMs. Reply here. */
   channel_id: string;
-  guild_id: string;
-  parent_channel_id: string;
+  /** Null for DMs. */
+  guild_id: string | null;
+  /** Parent text channel for guild messages (threads resolve to it); null for DMs. */
+  parent_channel_id: string | null;
+  is_dm: boolean;
+  /** The DM channel id when is_dm, else null. */
+  dm_channel_id: string | null;
   author_id: string;
   author_username: string;
-  /** The author's own text (discord.js cleanContent). Kept for backward compatibility. */
+  /** The author's own text (clean content) with the bot's @mention stripped. */
   content: string;
+  /** The author's own text (clean content) exactly as sent, mention included. */
+  content_original: string;
   /** Note + forwarded messages + embeds + attachment URLs as one readable block. */
   content_full: string;
   is_forward: boolean;
@@ -50,6 +65,47 @@ export type WebhookPayload = {
   is_reply: boolean;
   referenced_message_id: string | null;
 };
+
+export type WebhookPayloadSource = {
+  messageId: string;
+  channelId: string;
+  guildId: string | null;
+  parentChannelId: string | null;
+  isDm: boolean;
+  authorId: string;
+  authorUsername: string;
+  /** Clean content with the bot's mention removed. */
+  content: string;
+  /** Clean content as sent. */
+  contentOriginal: string;
+  /** Embeds, attachments, and forwarded snapshots; its content should be `content`. */
+  message: MessageInput;
+  isReply: boolean;
+  referencedMessageId: string | null;
+};
+
+export function buildWebhookPayload(source: WebhookPayloadSource): WebhookPayload {
+  const extracted = extractMessage({ ...source.message, content: source.content });
+  return {
+    message_id: source.messageId,
+    channel_id: source.channelId,
+    guild_id: source.isDm ? null : source.guildId,
+    parent_channel_id: source.isDm ? null : source.parentChannelId,
+    is_dm: source.isDm,
+    dm_channel_id: source.isDm ? source.channelId : null,
+    author_id: source.authorId,
+    author_username: source.authorUsername,
+    content: source.content,
+    content_original: source.contentOriginal,
+    content_full: flattenMessageText(extracted),
+    is_forward: extracted.forwarded.length > 0,
+    forwarded: extracted.forwarded,
+    embeds: extracted.embeds,
+    attachments: extracted.attachments,
+    is_reply: source.isReply,
+    referenced_message_id: source.isReply ? source.referencedMessageId : null,
+  };
+}
 
 export type WebhookDeps = {
   fetchImpl?: typeof fetch;
@@ -107,6 +163,7 @@ export function sanitizeWebhookPayload(payload: WebhookPayload): WebhookPayload 
     ...payload,
     author_username: redactSecrets(payload.author_username),
     content: redactSecrets(payload.content),
+    content_original: redactSecrets(payload.content_original),
     content_full: redactSecrets(payload.content_full),
     forwarded: payload.forwarded.map(sanitizeForward),
     embeds: payload.embeds.map(sanitizeEmbed),

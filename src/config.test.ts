@@ -145,3 +145,23 @@ describe("channel and category scope", () => {
     );
   });
 });
+
+describe("DM intake", () => {
+  it("defaults DISCORD_DM_INTAKE to on and parses false", () => {
+    assert.equal(loadConfig(baseEnv()).dmIntake, true);
+    assert.equal(loadConfig(baseEnv({ DISCORD_DM_INTAKE: "false" })).dmIntake, false);
+    assert.equal(loadConfig(baseEnv({ DISCORD_DM_INTAKE: "1" })).dmIntake, true);
+  });
+
+  it("rejects an unparseable DISCORD_DM_INTAKE", () => {
+    assert.throws(() => loadConfig(baseEnv({ DISCORD_DM_INTAKE: "sometimes" })), /DISCORD_DM_INTAKE must be true or false/);
+  });
+
+  it("defaults to intake mode (mention-required guild + DM auto) with the fail-closed user allowlist", () => {
+    const config = loadConfig(baseEnv());
+    assert.equal(config.intakeMode, true);
+    assert.equal(config.dmIntake, true);
+    assert.deepEqual(config.discordAllowedUserIds, [snowflakeUser]);
+    assert.throws(() => loadConfig(baseEnv({ DISCORD_ALLOWED_USER_IDS: undefined })), /DISCORD_ALLOWED_USER_IDS is required/);
+  });
+});
