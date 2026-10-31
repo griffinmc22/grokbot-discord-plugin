@@ -1,8 +1,8 @@
 # Discord for Grok Bot
 
-Talk to your Grok Bot from Discord. It only replies in the server channels you choose. Direct messages and other channels stay quiet.
+Talk to your Grok Bot from Discord. It only replies in the server channels you choose, and in DMs from users you allow. Other channels and other people's DMs stay quiet.
 
-**This fork is an intake bridge by default.** Forward any Discord message into a private `#inbox` channel with a note. Every message from your allowlisted user ID goes to a Grok Bot webhook routine, with no @mention needed. The routine adds Google Calendar events or does research, then confirms with a reply. Setup, env vars, payload shape, and a routine prompt are in [docs/INTAKE-BRIDGE.md](docs/INTAKE-BRIDGE.md). The steps below describe the original mention-driven chat setup, which you get with `DISCORD_INTAKE_MODE=false`. Intake mode requires `DISCORD_ALLOWED_USER_IDS`.
+**This fork is an intake bridge by default.** DM the bot, or forward any Discord message to it, and every message from your allowlisted user ID goes to a Grok Bot webhook routine with no mention needed. In allowlisted server channels, @mention the bot or reply to it. The routine adds Google Calendar events or does research, then confirms with a reply. Setup, env vars, payload shape, and a routine prompt are in [docs/INTAKE-BRIDGE.md](docs/INTAKE-BRIDGE.md). The steps below describe the original chat setup. Intake mode requires `DISCORD_ALLOWED_USER_IDS`. `DISCORD_INTAKE_MODE=false` restores the legacy name and follow-up matching in channels.
 
 ## 1. Install the plugin
 
@@ -55,9 +55,10 @@ In each Discord channel the bot should use, give it those same channel permissio
 | `DISCORD_GUILD_ID` | yes | Server ID |
 | `DISCORD_CHANNEL_IDS` | one of these two | Comma-separated text channel IDs |
 | `DISCORD_CATEGORY_IDS` | one of these two | Comma-separated category IDs; every text channel under them is allowed |
-| `DISCORD_ALLOWED_USER_IDS` | yes in intake mode | Comma-separated user IDs that may use the bot |
-| `DISCORD_INTAKE_MODE` | no | Default `true`; `false` for mention-driven chat |
-| `DISCORD_ALLOWED_ROLE_IDS` | no | Extra role check |
+| `DISCORD_ALLOWED_USER_IDS` | yes in intake mode | Comma-separated user IDs that may use the bot (channels and DMs) |
+| `DISCORD_INTAKE_MODE` | no | Default `true`: allowed users only, and channels need an @mention or a reply to the bot. `false` = legacy chat mode |
+| `DISCORD_DM_INTAKE` | no | Default `true`: every DM from an allowed user is forwarded, no mention. `false` = ignore DMs |
+| `DISCORD_ALLOWED_ROLE_IDS` | no | Extra role check (guild channels only) |
 | `GROK_WEBHOOK_URL` / `GROK_WEBHOOK_SECRET` | for inbound | Webhook URL and key from the Grok Bot routine panel |
 
 ## 3. Save those values in Grok Bot
@@ -81,7 +82,7 @@ In one of the Discord channels you listed, type:
 You should get a reply in that same channel.
 
 - Other channels: no reply
-- Direct messages: no reply
+- Direct messages: forwarded only from users in `DISCORD_ALLOWED_USER_IDS` (DM intake). Everyone else gets no reply.
 - **@YourBot /status** — checks that it is online
 - **@YourBot /new** — starts a fresh conversation
 

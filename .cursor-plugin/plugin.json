@@ -47,7 +47,12 @@
       "DISCORD_INTAKE_MODE": {
         "type": "string",
         "title": "Intake mode",
-        "description": "Optional, default true. Every message from an allowed user in an allowlisted channel is forwarded; no @mention or bot name needed. Set false for mention-driven chat."
+        "description": "Optional, default true. Allowed users only; in guild channels the bot must be @mentioned or replied to (no name matching). Set false for legacy chat mode."
+      },
+      "DISCORD_DM_INTAKE": {
+        "type": "string",
+        "title": "DM intake",
+        "description": "Optional, default true. Every DM to the bot from a user in DISCORD_ALLOWED_USER_IDS is forwarded with no mention; DMs from anyone else are ignored. Set false to ignore all DMs."
       },
       "DISCORD_ALLOWED_ROLE_IDS": {
         "type": "string",

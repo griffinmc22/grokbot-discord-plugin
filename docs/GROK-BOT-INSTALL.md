@@ -14,7 +14,7 @@ Do not write tokens, webhook keys, or connector-secret paths into chat, Discord,
 2. Do **not** ask the operator to paste `DISCORD_TOKEN` in chat or Discord. Use a **secret-request**. If it was pasted, tell them to reset the token, then secret-request the new value.
 3. Do **not** use Railway. The gateway worker runs on this Grok Bot computer.
 4. Never Administrator. Never two Gateways on one token. Never open a Discord Gateway inside MCP. Never start a thread. Never echo secrets.
-5. One guild (`DISCORD_GUILD_ID`). Only the parent channels in `DISCORD_CHANNEL_IDS` or in a category in `DISCORD_CATEGORY_IDS`. DMs stay quiet.
+5. One guild (`DISCORD_GUILD_ID`). Only the parent channels in `DISCORD_CHANNEL_IDS` or in a category in `DISCORD_CATEGORY_IDS`, plus DMs from users in `DISCORD_ALLOWED_USER_IDS` when DM intake is on. Other DMs stay quiet.
 6. MCP is REST only. Never invent a second listener.
 7. Do not commit `.env` or `.runtime-webhook.env`. Do not bake one guild’s IDs or secret paths into shipped files.
 
@@ -88,7 +88,7 @@ Fail-closed before any webhook or reply:
 
 - author is a bot
 - message is a webhook
-- no guild (DMs)
+- no guild (DMs), unless DM intake is on and the author is in `DISCORD_ALLOWED_USER_IDS`
 - guild is not `DISCORD_GUILD_ID`
 - parent channel is not in `DISCORD_CHANNEL_IDS`, and its category is not in `DISCORD_CATEGORY_IDS`
 
@@ -140,12 +140,15 @@ JSON fields the gateway posts:
 | Field | Meaning |
 | --- | --- |
 | `message_id` | Snowflake to reply to |
-| `channel_id` | Channel the event arrived on |
-| `guild_id` | Guild snowflake |
-| `parent_channel_id` | Parent text channel; replies always go here |
+| `channel_id` | Channel the event arrived on (the DM channel for DMs) |
+| `guild_id` | Guild snowflake; `null` for DMs |
+| `parent_channel_id` | Parent text channel; replies always go here. `null` for DMs |
+| `is_dm` | Whether this is a DM to the bot |
+| `dm_channel_id` | The DM channel id when `is_dm`, else `null` |
 | `author_id` | Author snowflake |
 | `author_username` | Author name, already redacted of obvious secrets |
-| `content` | The author's own text (clean content), already redacted of obvious secrets |
+| `content` | The author's own text (clean content) with the bot's mention removed, already redacted of obvious secrets |
+| `content_original` | The author's own text as sent, mention included |
 | `content_full` | Note + forwarded messages + embed text + attachment URLs as one block. Read this first. |
 | `is_forward` | Whether the message forwards one or more other messages |
 | `forwarded` | `[{ content, embeds, attachments }]` for each forwarded message snapshot |
@@ -202,7 +205,8 @@ Walk the operator through this (also in `setup-discord-app`):
 | `DISCORD_CHANNEL_IDS` | same. Parent channel snowflakes only. Optional if `DISCORD_CATEGORY_IDS` is set; at least one is required. |
 | `DISCORD_CATEGORY_IDS` | same. Optional category snowflakes; every text channel in them (and its threads) is allowed. |
 | `DISCORD_ALLOWED_USER_IDS` | launch wrapper / local `.env`. Comma-separated user snowflakes. Required in intake mode (default); the worker refuses to start without it. |
-| `DISCORD_INTAKE_MODE` | optional, default `true`. `false` restores mention/name-driven chat. |
+| `DISCORD_INTAKE_MODE` | optional, default `true`: allowed users only; channels need an @mention or a reply to the bot. `false` = legacy chat mode. |
+| `DISCORD_DM_INTAKE` | optional, default `true`: every DM from an allowed user is forwarded. `false` = ignore DMs. |
 | `BOT_NAME_PREFIX` | optional spoken name. Whole-word match anywhere (chat mode only). |
 | `DISCORD_ALLOWED_ROLE_IDS` | optional extra role check on top of the user allowlist. Empty = no role check. |
 | `GROK_WEBHOOK_URL` and `GROK_WEBHOOK_SECRET` | gateway process env on this computer. Copied from the routine panel (below). Never commit them. |
@@ -249,7 +253,7 @@ Do not start a second Gateway. Do not open a discord.js Client from MCP. Do not 
 
 ## Who the bot answers
 
-**Intake mode (default, `DISCORD_INTAKE_MODE=true`):** every message from a user in `DISCORD_ALLOWED_USER_IDS` in an allowlisted channel is directed. No @mention, name, reply, or follow-up is needed. Only explicit `/status`, `/new`, `/reset` are handled locally, and never on a forwarded message. The rest of this section describes chat mode (`DISCORD_INTAKE_MODE=false`).
+**Intake mode (default, `DISCORD_INTAKE_MODE=true`):** only users in `DISCORD_ALLOWED_USER_IDS` are handled. In allowlisted channels a message is directed only when it @mentions the bot (user mention or the bot's managed role) or replies to a bot message. There is no name matching and no follow-up window. **DM intake (default, `DISCORD_DM_INTAKE=true`):** every DM from an allowed user is directed with no mention; other DMs are ignored. Only explicit `/status`, `/new`, `/reset` are handled locally, and never on a forwarded message. Full semantics and payload: `docs/INTAKE-BRIDGE.md`. The rest of this section describes chat mode (`DISCORD_INTAKE_MODE=false`).
 
 Three layers. The gateway filter is not always right. The inbound routine must still choose `SILENCE`.
 
@@ -339,7 +343,7 @@ Do not skip ahead to `@Bot hello`. That hides whether the failure is REST, send,
 6. **Gateway env has the webhook URL.** Read the gateway process env or log, not `discord_status.webhookConfigured`.
 7. **Inbound `lastRunAt` after `@Bot hello`.** A reply or a SILENCE both count as a run. No run means the POST never arrived.
 8. **Name vs third-person.** Whole-word address gets a reply. Third-person name hits SILENCE.
-9. **Other channels silent.** A mention in a channel not in `DISCORD_CHANNEL_IDS` produces no reply and no inbound run. DMs stay quiet.
+9. **Other channels silent.** A mention in a channel not in `DISCORD_CHANNEL_IDS` produces no reply and no inbound run. DMs from users outside `DISCORD_ALLOWED_USER_IDS` stay quiet.
 
 Proof pair to ask the operator for: a line that addresses the bot by name should get a reply; a line that only talks about the bot by name should stay silent.
 
@@ -368,7 +372,8 @@ Use this table when the install is not clean. These are the failures that happen
 | Name-as-addressee replies, third-person name also replies | Routine is not SILENCEing third-person name hits | Use the inbound prompt in this file. Whole-word matching is working; the routine must still SILENCE. |
 | After a SILENCE, later ambient lines wake the bot | Follow-up window opened, or `author_id` was omitted on a real reply | Pass `author_id` only on real replies. SILENCE follow-up noise. Window is 15 minutes. `/new` clears it. |
 | Bot talks in the wrong channel | Channel not restricted | Fail-closed on parent channel. Check `DISCORD_CHANNEL_IDS`. |
-| Bot talks in DMs | Should be impossible | DMs have no `guildId`. Stop and inspect; do not add DM intents. |
+| Bot answers a DM from someone not allowlisted | Should be impossible | DMs require the author in `DISCORD_ALLOWED_USER_IDS` and `DISCORD_DM_INTAKE` not false. Stop and inspect the worker env. |
+| DMs to the bot get no reply | DM intake off, author not allowlisted, or worker not restarted after upgrading | Check `DISCORD_DM_INTAKE` and `DISCORD_ALLOWED_USER_IDS`, then `discord_restart_worker`. The boot log says whether DM intake is on. |
 | `discord_history` looks empty of other people | Other users omitted unless they hold an allowed role | Empty `DISCORD_ALLOWED_ROLE_IDS` allows anyone to talk, not to appear as peers in history. |
 | Need to post a screenshot; `discord_send` has no file field | MCP send/reply cannot attach | Raw multipart POST to the channel messages endpoint. Invite needs Attach Files. |
 | Two ready lines / Discord reconnect storms | Two gateway processes on one token | Kill extras. One supervisor, one gateway. MCP must never open a Gateway. |
