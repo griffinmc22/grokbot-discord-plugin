@@ -3,6 +3,8 @@ import {
   defaultRatePerUser,
   defaultRateWindowMs,
 } from "./constants.ts";
+import { defaultAckEmoji, defaultErrorEmoji, resolveReactionEmoji } from "./ack.ts";
+import { usableEnvValue, type EnvMap } from "./env.ts";
 import { assertSnowflake, parseSnowflakeList } from "./ids.ts";
 import { parsePublicWebhookUrl } from "./webhook-url.ts";
 
@@ -27,6 +29,10 @@ export type ConnectorConfig = {
    * with no mention. DMs are never handled when discordAllowedUserIds is empty.
    */
   dmIntake: boolean;
+  /** Reaction added the moment a message is accepted (default 👀); null = off. */
+  ackEmoji: string | null;
+  /** Reaction added when forwarding fails (default ⚠️); null = off. */
+  errorEmoji: string | null;
   grokWebhookUrl?: string;
   grokWebhookSecret?: string;
   botNamePrefix?: string;
@@ -35,36 +41,7 @@ export type ConnectorConfig = {
   ratePerChannel: number;
 };
 
-type EnvMap = Record<string, string | undefined>;
-
-function isUnresolvedPlaceholder(value: string): boolean {
-  return (
-    value.startsWith("${") ||
-    value.startsWith("{{") ||
-    value.startsWith("${{") ||
-    /^<[A-Z0-9_]+>$/i.test(value)
-  );
-}
-
-export function usableEnvValue(value: string | undefined): string | undefined {
-  let trimmed = value?.trim();
-  if (!trimmed) {
-    return undefined;
-  }
-
-  if (
-    (trimmed.startsWith('"') && trimmed.endsWith('"')) ||
-    (trimmed.startsWith("'") && trimmed.endsWith("'"))
-  ) {
-    trimmed = trimmed.slice(1, -1).trim();
-  }
-
-  if (!trimmed || isUnresolvedPlaceholder(trimmed)) {
-    return undefined;
-  }
-
-  return trimmed;
-}
+export { usableEnvValue } from "./env.ts";
 
 export function optionalEnv(name: string, env: EnvMap = process.env): string | undefined {
   const direct = usableEnvValue(env[name]);
@@ -216,6 +193,8 @@ export function loadConfig(env: EnvMap = process.env): ConnectorConfig {
     discordAllowedUserIds,
     intakeMode,
     dmIntake: parseBooleanEnv("DISCORD_DM_INTAKE", true, env),
+    ackEmoji: resolveReactionEmoji("DISCORD_ACK_EMOJI", defaultAckEmoji, env),
+    errorEmoji: resolveReactionEmoji("DISCORD_ERROR_EMOJI", defaultErrorEmoji, env),
     grokWebhookUrl,
     grokWebhookSecret,
     botNamePrefix: parseBotNamePrefix(optionalEnv("BOT_NAME_PREFIX", env)),

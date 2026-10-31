@@ -74,6 +74,9 @@ export function workerEnv(config: ConnectorConfig): NodeJS.ProcessEnv {
     DISCORD_ALLOWED_USER_IDS: config.discordAllowedUserIds.join(","),
     DISCORD_INTAKE_MODE: String(config.intakeMode),
     DISCORD_DM_INTAKE: String(config.dmIntake),
+    // "none" rather than "": an empty value can be dropped from a child env on Windows.
+    DISCORD_ACK_EMOJI: config.ackEmoji ?? "none",
+    DISCORD_ERROR_EMOJI: config.errorEmoji ?? "none",
     GROK_WEBHOOK_URL: config.grokWebhookUrl ?? "",
     GROK_WEBHOOK_SECRET: config.grokWebhookSecret ?? "",
     BOT_NAME_PREFIX: config.botNamePrefix ?? "",

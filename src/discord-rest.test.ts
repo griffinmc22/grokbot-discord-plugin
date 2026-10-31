@@ -105,6 +105,8 @@ function categoryConfig(overrides: Partial<ConnectorConfig> = {}): ConnectorConf
     discordAllowedUserIds: [ownerId],
     intakeMode: true,
     dmIntake: true,
+    ackEmoji: "👀",
+    errorEmoji: "⚠️",
     rateWindowMs: 1000,
     ratePerUser: 6,
     ratePerChannel: 15,

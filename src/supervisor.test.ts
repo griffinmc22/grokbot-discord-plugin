@@ -23,6 +23,8 @@ const config: ConnectorConfig = {
   discordAllowedUserIds: ["333333333333333333"],
   intakeMode: true,
   dmIntake: true,
+  ackEmoji: "👀",
+  errorEmoji: "⚠️",
   rateWindowMs: 1000,
   ratePerUser: 6,
   ratePerChannel: 15,

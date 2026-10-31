@@ -11,6 +11,13 @@ import {
   type PartialMessage,
 } from "discord.js";
 
+import {
+  addReaction,
+  markFailed,
+  reactionKey,
+  stderrReactionLogger,
+  type RemovableReactable,
+} from "./ack.ts";
 import type { ConnectorConfig } from "./config.ts";
 import { followUpWindowMs, publicError } from "./constants.ts";
 import {
@@ -240,6 +247,18 @@ async function speak(
   });
 }
 
+function reactionTarget(client: Client, message: Message): RemovableReactable {
+  return {
+    react: (emoji) => message.react(emoji),
+    async removeOwnReaction(emoji) {
+      const botId = client.user?.id;
+      if (botId) {
+        await message.reactions.resolve(reactionKey(emoji))?.users.remove(botId);
+      }
+    },
+  };
+}
+
 /** Partial messages (enabled for DMs) carry no content until fetched. */
 async function completeMessage(incoming: Message | PartialMessage): Promise<Message | null> {
   if (!incoming.partial) {
@@ -365,13 +384,19 @@ export async function startDiscordGateway(config: ConnectorConfig): Promise<Clie
 
     const content = contentWithoutBotMention(client, message);
 
+    // Rate limit at arrival (not after waiting on the channel mutex), so the ack below is instant
+    // and rate-limited drops never get one.
+    if (!userRate.allow(message.author.id) || !channelRate.allow(scopeId)) {
+      process.stderr.write("grok-discord inbound dropped: rate limited\n");
+      return;
+    }
+
+    // Fire-and-forget: a slow or failed reaction never delays or blocks forwarding.
+    const reactions = reactionTarget(client, message);
+    const ackPending = addReaction(reactions, config.ackEmoji, stderrReactionLogger);
+
     await mutex.run(scopeId, async () => {
       try {
-        if (!userRate.allow(message.author.id) || !channelRate.allow(scopeId)) {
-          process.stderr.write("grok-discord inbound dropped: rate limited\n");
-          return;
-        }
-
         // In intake mode a forwarded message is always an intake item, whatever the note says.
         const roomCommand =
           config.intakeMode && message.messageSnapshots.size > 0
@@ -415,6 +440,11 @@ export async function startDiscordGateway(config: ConnectorConfig): Promise<Clie
       } catch (error) {
         const detail = error instanceof Error ? error.message : "unknown error";
         process.stderr.write(`grok-discord turn error: ${detail}\n`);
+        void markFailed(
+          reactions,
+          { ackEmoji: config.ackEmoji, errorEmoji: config.errorEmoji, ackPending },
+          stderrReactionLogger,
+        );
         try {
           await speak(config, message, publicError);
         } catch (speakError) {
