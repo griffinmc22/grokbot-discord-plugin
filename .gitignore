@@ -7,3 +7,6 @@ dist/
 *.log
 .DS_Store
 coverage/
+.health
+.health.*.tmp
+.supervisor.pid
