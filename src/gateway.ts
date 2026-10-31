@@ -562,6 +562,10 @@ export async function startDiscordGateway(
       } catch (error) {
         const detail = error instanceof Error ? error.message : "unknown error";
         process.stderr.write(`grok-discord turn error: ${detail}\n`);
+        if (/webhook timeout|TimeoutError|aborted due to timeout/i.test(detail)) {
+          // The request was sent; Grok Bot is likely still processing it. Stay quiet.
+          return;
+        }
         void markFailed(
           reactions,
           { ackEmoji: config.ackEmoji, errorEmoji: config.errorEmoji, ackPending },
