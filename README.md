@@ -62,6 +62,12 @@ In each Discord channel the bot should use, give it those same channel permissio
 | `DISCORD_ACK_EMOJI` | no | Reaction added the moment a message is accepted. Unset = 👀; `none`/`off` (or set to empty) = no reaction |
 | `DISCORD_ERROR_EMOJI` | no | Reaction added if forwarding fails. Unset = ⚠️; `none`/`off` (or set to empty) = no reaction |
 | `GROK_WEBHOOK_URL` / `GROK_WEBHOOK_SECRET` | for inbound | Webhook URL and key from the Grok Bot routine panel |
+| `HEALTH_INTERVAL_MS` | no | Default `30000`. How often the gateway checks its connection and writes the health file |
+| `HEALTH_MAX_UNHEALTHY_MS` | no | Default `120000`. Disconnected this long → the gateway exits 1 so its supervisor restarts it |
+| `HEALTH_REST_INTERVAL_MS` | no | Default `300000`. REST liveness check; 3 failures in a row → exit 1 |
+| `DISCORD_HEALTH_FILE` | no | Default `<repo>/.health`. Gets `<epoch-ms> <ISO time>` while healthy |
+| `DISCORD_DEBUG` | no | Default `false`. `true` also logs heartbeat debug lines |
+| `HEALTH_STALE_SECONDS` / `HEALTH_STARTUP_GRACE_SECONDS` | no | `bin/run-forever.sh` only. Defaults `180` / `120`: kill the gateway if the health file is older than this, after the grace |
 
 ## 3. Save those values in Grok Bot
 
@@ -89,6 +95,17 @@ You should get a reply in that same channel.
 - **@YourBot /new** — starts a fresh conversation
 
 If something is missing, tell your Grok Bot **help me set up Discord**.
+
+## Keep it running
+
+If the gateway loses its Discord connection, it exits on its own (code 1) so it can be restarted. The MCP worker (`connect Discord`) restarts it automatically. To run it yourself, use the included supervisor:
+
+```bash
+npm run build
+bin/run-forever.sh .env
+```
+
+Details are under **Reliability** in [docs/INTAKE-BRIDGE.md](docs/INTAKE-BRIDGE.md).
 
 ## Tips
 

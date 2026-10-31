@@ -92,6 +92,13 @@ The routine needs the `grok-discord` MCP tools (from this plugin) so it can repl
 | `DISCORD_DM_INTAKE` | no | Default `true`: every DM from an allowed user is forwarded. `false` = ignore all DMs. |
 | `DISCORD_ACK_EMOJI` | no | Unset = 👀. Reaction added the moment a message is accepted. `none`/`off`, or an explicitly empty value, disables it. |
 | `DISCORD_ERROR_EMOJI` | no | Unset = ⚠️. Reaction added if forwarding fails. Same disable rules. |
+| `HEALTH_INTERVAL_MS` | no | Default `30000`. Health check and health-file write interval |
+| `HEALTH_MAX_UNHEALTHY_MS` | no | Default `120000`. Unhealthy this long → exit 1 |
+| `HEALTH_REST_INTERVAL_MS` | no | Default `300000`. REST liveness check interval; 3 failures in a row → exit 1 |
+| `DISCORD_HEALTH_FILE` | no | Default `<repo>/.health` |
+| `DISCORD_DEBUG` | no | Default `false`. `true` logs heartbeat debug lines |
+| `HEALTH_STALE_SECONDS` / `HEALTH_STARTUP_GRACE_SECONDS` | no | `bin/run-forever.sh` only. Defaults `180` / `120` |
+| `SUPERVISOR_PIDFILE` | no | `bin/run-forever.sh` only. Default `<repo>/.supervisor.pid` |
 | `DISCORD_ALLOWED_ROLE_IDS` | no | Extra role check in guild channels, on top of the user allowlist |
 
 Put them in `.env` in the plugin root (it is git-ignored; see `.env.example`) or in the Grok Bot launch-wrapper env. Never commit them.
@@ -106,7 +113,7 @@ bash ./bin/with-env.sh node dist/cli.js status   # is it running?
 bash ./bin/with-env.sh node dist/cli.js restart  # after changing env
 ```
 
-For a foreground run while debugging, use `bash ./bin/with-env.sh node dist/cli.js gateway`. From Grok Bot itself you can use the MCP tools `discord_ensure_worker` and `discord_restart_worker` instead. Run one gateway per bot token.
+To run it without the MCP host, use `bin/run-forever.sh .env` (see [Reliability](#reliability)). For a foreground run while debugging, use `bash ./bin/with-env.sh node dist/cli.js gateway`. From Grok Bot itself you can use the MCP tools `discord_ensure_worker` and `discord_restart_worker` instead. Run one gateway per bot token.
 
 Expected log lines (`~/.grok-discord/worker-*.log`):
 
@@ -115,6 +122,40 @@ grok-discord ready as YourBot#1234; one replica per bot token
 grok-discord intake mode: 1 allowed user(s); guild channels (1 channel(s), 0 category(ies)) need an @mention or a reply to the bot
 grok-discord DM intake on: every DM from an allowed user is forwarded
 ```
+
+Each line is prefixed with an ISO timestamp.
+
+## Reliability
+
+A gateway that stays alive but silently loses its Discord connection is caught and restarted. The gateway notices on its own, exits, and whatever supervises it starts a fresh one.
+
+**Connection events.** Each one is logged as a single timestamped line, with no secrets: `shardDisconnect` (with the close code), `shardReconnecting`, `shardResume` (with the number of replayed events), `shardReady`, `shardError`, `invalidated`, `error`, and `warn`. With `DISCORD_DEBUG=true`, heartbeat debug lines are logged too.
+
+**Health watchdog.** Every `HEALTH_INTERVAL_MS` (30 s) the gateway checks that its connection is Ready and its heartbeat latency is finite and under 10 s. A latency of `-1` (no heartbeat yet) is accepted only for the first 60 s after connecting. While healthy, it writes `<epoch-ms> <ISO time>` to `DISCORD_HEALTH_FILE` (default `<repo>/.health`, git-ignored), replacing the file in one step so readers never see half a write. If it's unhealthy for longer than `HEALTH_MAX_UNHEALTHY_MS` (120 s, counted from startup, so a gateway that never connects is caught too), it logs why and exits 1. Every `HEALTH_REST_INTERVAL_MS` (5 min) it also makes an authenticated REST call (`GET /users/@me`). Three failures in a row exit 1.
+
+**Fatal errors and signals.** An unhandled promise rejection or uncaught exception is logged as one line and exits 1. `SIGTERM`/`SIGINT` stop the timers, close the Discord connection, and exit 0 within about 3 s.
+
+**One gateway per bot token.** The gateway takes a lock in `~/.grok-discord/gateway-<token-fingerprint>.lock` and refreshes it every time it writes the health file. It's released on every exit, including the watchdog and fatal-error exits, so a restart is never blocked. A lock left by a killed gateway is taken over once its process is gone or it hasn't been refreshed for `HEALTH_MAX_UNHEALTHY_MS + 2 × HEALTH_INTERVAL_MS` (3 min). A second gateway started while a healthy one holds the lock exits with code 3.
+
+| Exit code | Meaning | Supervisor should |
+| --- | --- | --- |
+| 0 | Stopped by `SIGTERM`/`SIGINT` | Restart unless you are stopping it |
+| 1 | Unhealthy, invalidated session, failed REST checks, fatal error, or bad config | Restart (with backoff) |
+| 3 | Another gateway for this bot token is already running | Back off; the other one is serving |
+
+**Run it under a supervisor.** Use one of these, never both for the same bot token (the lock enforces this):
+
+- **MCP worker** (`discord_ensure_worker` / `node dist/cli.js ensure`): the `supervise` process restarts the gateway after any exit. Its backoff doubles to 30 s and resets after the gateway has run for at least 5 minutes.
+- **`bin/run-forever.sh <env-file>`** (POSIX `sh`): sources the env file and runs `node dist/cli.js gateway` in a loop. It restarts on any exit, with backoff from 2 s doubling to 60 s and back to 2 s after a 5-minute run. A background check kills the gateway if the health file is older than `HEALTH_STALE_SECONDS` (180) after a `HEALTH_STARTUP_GRACE_SECONDS` (120) startup grace, which also catches a gateway too wedged to run its own watchdog. `SIGTERM`/`SIGINT` stop the gateway and exit. It writes its pid to `.supervisor.pid` (`SUPERVISOR_PIDFILE`) and refuses to start while another live supervisor holds it. It logs timestamped lines to stdout and never prints env values.
+
+```bash
+npm ci && npm run build
+bin/run-forever.sh .env                  # foreground
+nohup bin/run-forever.sh .env >> gateway.log 2>&1 &   # background
+```
+
+Under systemd, launchd, or Docker you can use their restart policy (`Restart=always`, `--restart unless-stopped`) on `node dist/cli.js gateway` directly. Add a health check that fails when the health file is older than about 3 minutes.
+
 
 ## Reactions
 
