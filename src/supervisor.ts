@@ -368,12 +368,19 @@ export type SupervisorLoopDeps = {
   delay: (ms: number) => Promise<void>;
   isStopped: () => boolean;
   restartDelayMs: number;
+  /** Clock for the long-run backoff reset. Defaults to Date.now. */
+  now?: () => number;
+  /** A child that ran at least this long resets the backoff (default 5 minutes). */
+  resetAfterMs?: number;
 };
 
 export async function runSupervisorLoop(deps: SupervisorLoopDeps): Promise<void> {
+  const now = deps.now ?? (() => Date.now());
+  const resetAfterMs = deps.resetAfterMs ?? 5 * 60_000;
   let delayMs = deps.restartDelayMs;
 
   while (!deps.isStopped()) {
+    const startedAt = now();
     const child = deps.spawnGateway();
     const code = await child.wait();
     if (deps.isStopped()) {
@@ -381,12 +388,16 @@ export async function runSupervisorLoop(deps: SupervisorLoopDeps): Promise<void>
       return;
     }
 
-    if (code === 0) {
+    // Exit 1 from the health watchdog after days of uptime is a fresh failure, not the next step of a crash loop.
+    if (code === 0 || now() - startedAt >= resetAfterMs) {
       delayMs = deps.restartDelayMs;
     } else {
       delayMs = Math.min(delayMs * 2, 30_000);
     }
 
+    process.stderr.write(
+      `${new Date(now()).toISOString()} grok-discord supervisor: gateway exited (code ${code}); restarting in ${delayMs}ms\n`,
+    );
     await deps.delay(delayMs);
   }
 }

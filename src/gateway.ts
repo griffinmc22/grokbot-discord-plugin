@@ -5,6 +5,8 @@ import {
   Message,
   MessageReferenceType,
   Partials,
+  Routes,
+  Status,
   cleanContent,
   type DMChannel,
   type GuildTextBasedChannel,
@@ -18,6 +20,8 @@ import {
   stderrReactionLogger,
   type RemovableReactable,
 } from "./ack.ts";
+import { join } from "node:path";
+
 import type { ConnectorConfig } from "./config.ts";
 import { followUpWindowMs, publicError } from "./constants.ts";
 import {
@@ -30,12 +34,23 @@ import {
   userIsAllowed,
 } from "./filters.ts";
 import { createFileFollowUpStore } from "./follow-up.ts";
+import { acquireGatewayLock, exitLockHeld } from "./gateway-lock.ts";
+import {
+  createHealthMonitor,
+  exitUnhealthy,
+  installProcessHandlers,
+  loadHealthConfig,
+  timestamped,
+  writeFileAtomic,
+  type HealthConfig,
+  type HealthMonitor,
+} from "./health.ts";
 import type { MessageInput } from "./message-text.ts";
 import { createChannelMutex } from "./mutex.ts";
 import { deliverOutbound } from "./outbound.ts";
 import { createRateLimiter } from "./rate-limit.ts";
 import { parseRoomCommand } from "./room-commands.ts";
-import { defaultRuntimeDir, tokenFingerprint } from "./supervisor.ts";
+import { defaultPluginRoot, defaultRuntimeDir, isProcessAlive, tokenFingerprint } from "./supervisor.ts";
 import { buildWebhookPayload, postGrokWebhook } from "./webhook.ts";
 
 function parentChannelIdFromMessage(message: Message): string | null {
@@ -272,7 +287,85 @@ async function completeMessage(incoming: Message | PartialMessage): Promise<Mess
   }
 }
 
-export async function startDiscordGateway(config: ConnectorConfig): Promise<Client> {
+function logOut(line: string): void {
+  process.stdout.write(`${timestamped(line)}\n`);
+}
+
+function logErr(line: string): void {
+  process.stderr.write(`${timestamped(line)}\n`);
+}
+
+function statusLabel(status: number): string {
+  return Object.entries(Status).find(([, value]) => value === status)?.[0] ?? String(status);
+}
+
+/** One timestamped line per connection event, so a silent disconnect is visible in the log. */
+function logGatewayEvents(client: Client, monitor: HealthMonitor, debug: boolean): void {
+  client.on("shardDisconnect", (event, shardId) => {
+    monitor.noteActivity();
+    logErr(`grok-discord shard ${shardId} disconnected (code ${event.code})`);
+  });
+  client.on("shardReconnecting", (shardId) => {
+    monitor.noteActivity();
+    logOut(`grok-discord shard ${shardId} reconnecting`);
+  });
+  client.on("shardResume", (shardId, replayedEvents) => {
+    monitor.noteActivity();
+    logOut(`grok-discord shard ${shardId} resumed (${replayedEvents} replayed events)`);
+  });
+  client.on("shardReady", (shardId, unavailableGuilds) => {
+    monitor.noteActivity();
+    logOut(`grok-discord shard ${shardId} ready (${unavailableGuilds?.size ?? 0} unavailable guilds)`);
+  });
+  client.on("shardError", (error, shardId) => {
+    monitor.noteActivity();
+    logErr(`grok-discord shard ${shardId} error: ${error.message}`);
+  });
+  client.on("invalidated", () => {
+    // discord.js cannot recover an invalidated session; let the supervisor start a fresh process.
+    logErr(`grok-discord session invalidated; exiting with code ${exitUnhealthy}`);
+    process.exit(exitUnhealthy);
+  });
+  client.on("error", (error) => {
+    logErr(`grok-discord client error: ${error.message}`);
+  });
+  client.on("warn", (info) => {
+    logErr(`grok-discord warn: ${info}`);
+  });
+  client.on("debug", (info) => {
+    if (/heartbeat/i.test(info)) {
+      monitor.noteActivity();
+      if (debug) {
+        logOut(`grok-discord debug: ${info}`);
+      }
+    }
+  });
+}
+
+export async function startDiscordGateway(
+  config: ConnectorConfig,
+  health: HealthConfig = loadHealthConfig(process.env, defaultPluginRoot()),
+): Promise<Client> {
+  // One gateway per bot token, whichever supervisor started this process.
+  const fingerprint = tokenFingerprint(config.discordToken);
+  const acquired = acquireGatewayLock({
+    path: join(defaultRuntimeDir(), `gateway-${fingerprint}.lock`),
+    pid: process.pid,
+    now: () => Date.now(),
+    isAlive: isProcessAlive,
+    staleMs: health.maxUnhealthyMs + 2 * health.intervalMs,
+  });
+  if (!acquired.ok) {
+    logErr(
+      `grok-discord another gateway (pid ${acquired.holderPid}) holds the lock for this bot token ` +
+        `(refreshed ${acquired.ageMs}ms ago); exiting with code ${exitLockHeld}`,
+    );
+    process.exit(exitLockHeld);
+  }
+  const lock = acquired.lock;
+  // Runs on every process.exit, including the watchdog and fatal-error paths, so a restart is never blocked.
+  process.on("exit", () => lock.release());
+
   const followUps = createFileFollowUpStore(
     defaultRuntimeDir(),
     tokenFingerprint(config.discordToken),
@@ -293,14 +386,42 @@ export async function startDiscordGateway(config: ConnectorConfig): Promise<Clie
     partials: [Partials.Channel, Partials.Message],
   });
 
-  let booted = false;
+  const monitor = createHealthMonitor(health, {
+    now: () => Date.now(),
+    isReady: () => client.ws.status === Status.Ready,
+    statusLabel: () => statusLabel(client.ws.status),
+    ping: () => client.ws.ping,
+    writeHealthFile(path, contents) {
+      writeFileAtomic(path, contents);
+      if (!lock.refresh()) {
+        logErr(`grok-discord lost the gateway lock to another process; exiting with code ${exitUnhealthy}`);
+        process.exit(exitUnhealthy);
+      }
+    },
+    restCheck: () => client.rest.get(Routes.user("@me")),
+    exit: (code) => process.exit(code),
+    log: (line) => process.stderr.write(`${line}\n`),
+  });
+
+  installProcessHandlers(process, {
+    async shutdown() {
+      monitor.stop();
+      await client.destroy();
+      lock.release();
+    },
+    exit: (code) => process.exit(code),
+    log: (line) => process.stderr.write(`${line}\n`),
+  });
+
+  logGatewayEvents(client, monitor, health.debug);
+
   const onReady = () => {
-    if (booted) {
-      return;
-    }
-    booted = true;
     const tag = client.user?.tag ?? "unknown";
-    process.stdout.write(`grok-discord ready as ${tag}; one replica per bot token\n`);
+    logOut(`grok-discord ready as ${tag}; one replica per bot token`);
+    logOut(
+      `grok-discord health: file ${health.healthFile} every ${health.intervalMs}ms; ` +
+        `exit ${exitUnhealthy} after ${health.maxUnhealthyMs}ms unhealthy or ${health.restMaxFailures} failed REST checks`,
+    );
     process.stdout.write(
       config.intakeMode
         ? `grok-discord intake mode: ${config.discordAllowedUserIds.length} allowed user(s); guild channels (${config.discordChannelIds.length} channel(s), ${config.discordCategoryIds.length} category(ies)) need an @mention or a reply to the bot\n`
@@ -316,10 +437,11 @@ export async function startDiscordGateway(config: ConnectorConfig): Promise<Clie
     }
   };
 
+  // clientReady only (the old "ready" name is deprecated); once = one-shot boot log.
   client.once("clientReady", onReady);
-  client.once("ready", onReady);
 
   client.on("messageCreate", async (incoming) => {
+    monitor.noteActivity();
     const message = await completeMessage(incoming as Message | PartialMessage);
     if (!message) {
       return;
@@ -455,6 +577,7 @@ export async function startDiscordGateway(config: ConnectorConfig): Promise<Clie
     });
   });
 
+  monitor.start();
   await client.login(config.discordToken);
   return client;
 }
