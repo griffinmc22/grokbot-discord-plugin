@@ -1,12 +1,12 @@
 # Grok Bot install playbook
 
-This file is for **Grok Bot** (and any installer agent) that picked up this public repo or plugin. Humans should use `README.md`.
+This file is for **Grok Bot** (and any installer agent) that picked up this public repo or plugin. Humans should use `README.md`. For the forward-to-#inbox intake setup (the default for this fork), see `docs/INTAKE-BRIDGE.md`.
 
 Follow this file **exactly**. Do not improvise a shorter path. Then use the bundled skills: `setup-discord-app`, `connect-grok-bot`, `discord-chat`.
 
 If something is silent or broken, go to **Troubleshooting**. Almost every failure is a skipped step in this file, not a missing feature.
 
-Do not write tokens, webhook keys, `.runtime-webhook.env` values, or connector-secret paths into chat, Discord, or files in this repo.
+Do not write tokens, webhook keys, or connector-secret paths into chat, Discord, or files in this repo.
 
 ## Hard rules
 
@@ -14,9 +14,9 @@ Do not write tokens, webhook keys, `.runtime-webhook.env` values, or connector-s
 2. Do **not** ask the operator to paste `DISCORD_TOKEN` in chat or Discord. Use a **secret-request**. If it was pasted, tell them to reset the token, then secret-request the new value.
 3. Do **not** use Railway. The gateway worker runs on this Grok Bot computer.
 4. Never Administrator. Never two Gateways on one token. Never open a Discord Gateway inside MCP. Never start a thread. Never echo secrets.
-5. One guild (`DISCORD_GUILD_ID`). Only the parent channels in `DISCORD_CHANNEL_IDS`. DMs stay quiet.
+5. One guild (`DISCORD_GUILD_ID`). Only the parent channels in `DISCORD_CHANNEL_IDS` or in a category in `DISCORD_CATEGORY_IDS`, plus DMs from users in `DISCORD_ALLOWED_USER_IDS` when DM intake is on. Other DMs stay quiet.
 6. MCP is REST only. Never invent a second listener.
-7. Do not commit `.runtime-webhook.env`. Do not bake one guild’s IDs or secret paths into shipped files.
+7. Do not commit `.env` or `.runtime-webhook.env`. Do not bake one guild’s IDs or secret paths into shipped files.
 
 ## Architecture
 
@@ -28,7 +28,7 @@ Discord channel
     v
 Gateway worker  (one replica per bot token; /status and /new locally)
     |  POST JSON + Authorization + X-Grok-Signature
-    |  HTTPS automations URL (default) or loopback forwarder 127.0.0.1:8787
+    |  HTTPS webhook URL copied from the Grok Bot routine panel
     v
 Inbound webhook routine
     |  MCP tools only — REST, never a second Gateway
@@ -42,15 +42,12 @@ Discord REST API  ->  same parent channel
 flowchart LR
   D[Discord guild channel]
   GW[Gateway worker on the Grok Bot computer]
-  FW[Optional loopback forwarder 127.0.0.1:8787]
   IN[Inbound webhook routine]
   MCP[MCP REST tools]
   REST[Discord REST API]
 
   D -->|Gateway events| GW
-  GW -->|POST directed messages| IN
-  GW -.->|if DNS pin fails| FW
-  FW -->|Authorization and X-Grok-Signature| IN
+  GW -->|POST directed messages, Authorization and X-Grok-Signature| IN
   IN -->|discord_history and discord_reply| MCP
   MCP --> REST
   REST --> D
@@ -73,7 +70,7 @@ MCP is the agent’s tool surface. It talks to Discord over REST. It supervises 
 | `discord_ensure_worker` | Start the sidecar if down; **no-op** if the supervisor is already alive. Never opens a Gateway inside MCP. |
 | `discord_restart_worker` | Stop the live supervisor if up, then start one replica with the current env. Use after webhook URL or channel list changes. |
 
-Every tool refuses guilds and channels outside `DISCORD_GUILD_ID` / `DISCORD_CHANNEL_IDS`. Channel, message, and user IDs must be Discord snowflakes.
+Every tool refuses guilds and channels outside `DISCORD_GUILD_ID` / `DISCORD_CHANNEL_IDS` / `DISCORD_CATEGORY_IDS`. Channel, message, and user IDs must be Discord snowflakes.
 
 Register MCP with:
 
@@ -81,7 +78,7 @@ Register MCP with:
 bash ./bin/launch-mcp.sh
 ```
 
-Plugin root is the directory that contains `plugin.json` and `bin/launch-mcp.sh` (often `/workspace/grokbot-discord` after a GitHub copy).
+Plugin root is the directory that contains `plugin.json` and `bin/launch-mcp.sh` (often `/workspace/grokbot-discord-plugin` after a GitHub copy).
 
 ### Gateway worker
 
@@ -91,9 +88,11 @@ Fail-closed before any webhook or reply:
 
 - author is a bot
 - message is a webhook
-- no guild (DMs)
+- no guild (DMs), unless DM intake is on and the author is in `DISCORD_ALLOWED_USER_IDS`
 - guild is not `DISCORD_GUILD_ID`
-- parent channel is not in `DISCORD_CHANNEL_IDS`
+- parent channel is not in `DISCORD_CHANNEL_IDS`, and its category is not in `DISCORD_CATEGORY_IDS`
+
+- author is not in `DISCORD_ALLOWED_USER_IDS` (when set; required in intake mode, the default)
 
 If `DISCORD_ALLOWED_ROLE_IDS` is non-empty, members without those roles are dropped even when the line is directed. Empty means anyone in the allowlisted channel may talk. `discord_history` is stricter: other users are omitted unless they hold an allowed role. Empty role list does **not** mean history includes the whole channel.
 
@@ -141,36 +140,28 @@ JSON fields the gateway posts:
 | Field | Meaning |
 | --- | --- |
 | `message_id` | Snowflake to reply to |
-| `channel_id` | Channel the event arrived on |
-| `guild_id` | Guild snowflake |
-| `parent_channel_id` | Parent text channel; replies always go here |
+| `channel_id` | Channel the event arrived on (the DM channel for DMs) |
+| `guild_id` | Guild snowflake; `null` for DMs |
+| `parent_channel_id` | Parent text channel; replies always go here. `null` for DMs |
+| `is_dm` | Whether this is a DM to the bot |
+| `dm_channel_id` | The DM channel id when `is_dm`, else `null` |
 | `author_id` | Author snowflake |
 | `author_username` | Author name, already redacted of obvious secrets |
-| `content` | Clean content, already redacted of obvious secrets |
+| `content` | The author's own text (clean content) with the bot's mention removed, already redacted of obvious secrets |
+| `content_original` | The author's own text as sent, mention included |
+| `content_full` | Note + forwarded messages + embed text + attachment URLs as one block. Read this first. |
+| `is_forward` | Whether the message forwards one or more other messages |
+| `forwarded` | `[{ content, embeds, attachments }]` for each forwarded message snapshot |
+| `embeds` | `[{ title, description, url, author, author_url, footer, fields: [{ name, value }] }]` on the message itself |
+| `attachments` | `[{ name, url, content_type, size }]` on the message itself |
 | `is_reply` | Whether the Discord message referenced another |
 | `referenced_message_id` | Referenced snowflake or null |
 
-Do **not** create extra inbound routines so someone can copy a URL or key from a panel. The agent never usefully sees that panel key. Build the host URL on this computer:
+### Webhook URL and key
 
-```
-https://api2.cursor.sh/automations/webhook/<automationId>
-```
+Create a webhook routine in the Grok Bot app, copy its webhook URL and key from the routine panel into `GROK_WEBHOOK_URL` and `GROK_WEBHOOK_SECRET`.
 
-`automationId` is the stable UUID from `sha256(agentId NUL routineFolder)`. Pair it with the sender key already on disk (`webhook-keys.json`).
-
-### Optional loopback forwarder
-
-Default: point `GROK_WEBHOOK_URL` at the HTTPS automations URL above. This plugin pins webhook DNS (SSRF guard) and honors Node `lookup` `all:true`.
-
-If the gateway log still shows `Invalid IP address: undefined`, do **not** disable the pin. Point the worker at loopback and forward:
-
-| Variable | Role |
-| --- | --- |
-| `GROK_WEBHOOK_URL` | `http://127.0.0.1:8787/` — worker POSTs here; DNS pin is skipped |
-| `GROK_WEBHOOK_UPSTREAM` | Real api2 automations webhook URL |
-| `GROK_WEBHOOK_SECRET` | Same sender key the host already has |
-
-`bin/webhook-forward.mjs` forwards `content-type`, `Authorization`, and `X-Grok-Signature`. `bin/with-env.sh` starts it if `127.0.0.1:8787` is down. After changing these values, `discord_restart_worker`. One replica.
+Both go on the **gateway** env. The gateway POSTs to that URL with `Authorization: Bearer <GROK_WEBHOOK_SECRET>` and `X-Grok-Signature: sha256=<hmac of body>`. The URL must be public HTTPS with no embedded credentials; the gateway pins its DNS answer, refuses private, link-local, and metadata addresses (SSRF guard), and does not follow redirects. `http://127.0.0.1` is accepted only for local tests.
 
 ## Install sequence
 
@@ -179,7 +170,7 @@ Do these in order.
 ### 1. Get the plugin onto this computer
 
 1. Search Plugins for `discord` / `grok-discord`. If **Discord for Grok Bot** is listed, install it.
-2. If SearchPlugins returns nothing, the marketplace listing is missing. The GitHub URL **404s** without repo access. That is not evidence the plugin does not exist. Copy the tree onto this Grok Bot computer from an account that can read `NinjaProtocol/grokbot-discord`. Do not ask the operator to clone.
+2. If SearchPlugins returns nothing, the marketplace listing is missing. Install from the public repo https://github.com/griffinmc22/grokbot-discord-plugin (`griffinmc22/grokbot-discord-plugin`): copy that tree onto this Grok Bot computer. Do not ask the operator to clone.
 3. If `package-lock.json` cannot be fetched in one GitHub MCP call, regenerate it locally in the plugin root. Do not invent a lockfile by hand.
 4. Node **20.19 or newer** is enough (known working host: 20.19.x). An engines warning can still produce `dist/cli.js`. Confirm the build exists, then continue.
 5. In the plugin root: `npm install && npm run build`.
@@ -211,10 +202,15 @@ Walk the operator through this (also in `setup-discord-app`):
 | --- | --- |
 | `DISCORD_TOKEN` | connector-secrets, via **secret-request**. Launch wrapper reads `DISCORD_TOKEN` or `DISCORD_TOKEN_FILE`. |
 | `DISCORD_GUILD_ID` | launch wrapper / local `.env`. Not the repo. |
-| `DISCORD_CHANNEL_IDS` | same. Parent channel snowflakes only. |
-| `BOT_NAME_PREFIX` | optional spoken name. Whole-word match anywhere. |
-| `DISCORD_ALLOWED_ROLE_IDS` | optional. Empty = anyone in an allowlisted channel. |
-| `GROK_WEBHOOK_URL` and `GROK_WEBHOOK_SECRET` | gateway process env on this computer. Built below. Do not commit `.runtime-webhook.env`. |
+| `DISCORD_CHANNEL_IDS` | same. Parent channel snowflakes only. Optional if `DISCORD_CATEGORY_IDS` is set; at least one is required. |
+| `DISCORD_CATEGORY_IDS` | same. Optional category snowflakes; every text channel in them (and its threads) is allowed. |
+| `DISCORD_ALLOWED_USER_IDS` | launch wrapper / local `.env`. Comma-separated user snowflakes. Required in intake mode (default); the worker refuses to start without it. |
+| `DISCORD_INTAKE_MODE` | optional, default `true`: allowed users only; channels need an @mention or a reply to the bot. `false` = legacy chat mode. |
+| `DISCORD_DM_INTAKE` | optional, default `true`: every DM from an allowed user is forwarded. `false` = ignore DMs. |
+| `DISCORD_ACK_EMOJI` / `DISCORD_ERROR_EMOJI` | optional, `.env` / gateway env only (not `mcp.json`). Unset = 👀 / ⚠️; `none`/`off` or an explicitly empty value disables. Needs Add Reactions in the channel. |
+| `BOT_NAME_PREFIX` | optional spoken name. Whole-word match anywhere (chat mode only). |
+| `DISCORD_ALLOWED_ROLE_IDS` | optional extra role check on top of the user allowlist. Empty = no role check. |
+| `GROK_WEBHOOK_URL` and `GROK_WEBHOOK_SECRET` | gateway process env on this computer. Copied from the routine panel (below). Never commit them. |
 
 Unexpanded `${VAR}` placeholders are ignored. If Configure exists, it may be used for the same values. Never paste the token in chat.
 
@@ -222,9 +218,7 @@ Unexpanded `${VAR}` placeholders are ignored. If Configure exists, it may be use
 
 Create **one** Grok Bot routine with a webhook trigger. Put the prompt in **Inbound routine prompt** on it.
 
-Build the host URL on this computer (pattern above). Put that HTTPS URL in `GROK_WEBHOOK_URL` and the sender key in `GROK_WEBHOOK_SECRET` on the **gateway** env. MCP-only env does not count.
-
-Direct HTTPS is the default. Use the loopback forwarder only if the gateway log shows `Invalid IP address: undefined`.
+Create a webhook routine in the Grok Bot app, copy its webhook URL and key from the routine panel into `GROK_WEBHOOK_URL` and `GROK_WEBHOOK_SECRET` on the **gateway** env. MCP-only env does not count.
 
 ### 5. Start exactly one worker
 
@@ -260,11 +254,13 @@ Do not start a second Gateway. Do not open a discord.js Client from MCP. Do not 
 
 ## Who the bot answers
 
+**Intake mode (default, `DISCORD_INTAKE_MODE=true`):** only users in `DISCORD_ALLOWED_USER_IDS` are handled. In allowlisted channels a message is directed only when it @mentions the bot (user mention or the bot's managed role) or replies to a bot message. There is no name matching and no follow-up window. **DM intake (default, `DISCORD_DM_INTAKE=true`):** every DM from an allowed user is directed with no mention; other DMs are ignored. Only explicit `/status`, `/new`, `/reset` are handled locally, and never on a forwarded message. Full semantics and payload: `docs/INTAKE-BRIDGE.md`. The rest of this section describes chat mode (`DISCORD_INTAKE_MODE=false`).
+
 Three layers. The gateway filter is not always right. The inbound routine must still choose `SILENCE`.
 
 ### Fail-closed before directed
 
-Dropped entirely: bots, webhooks, DMs, wrong guild, parent channel not in `DISCORD_CHANNEL_IDS`, or (if roles are set) a member without an allowed role.
+Dropped entirely: bots, webhooks, DMs, wrong guild, parent channel not in `DISCORD_CHANNEL_IDS` (and not in a `DISCORD_CATEGORY_IDS` category), or (if roles are set) a member without an allowed role.
 
 ### Directed
 
@@ -290,7 +286,7 @@ Pass inbound `author_id` into `discord_reply` so a real reply opens the follow-u
 
 ## Inbound routine prompt
 
-Put this on the one inbound webhook routine. Do not add a second inbound routine. Do not add a “copy the webhook URL from the panel” step.
+Put this on the one inbound webhook routine in chat mode. Do not add a second inbound routine. For intake mode use the routine prompt in `docs/INTAKE-BRIDGE.md`.
 
 ```
 You are answering Discord through the grok-discord MCP tools only.
@@ -302,8 +298,10 @@ That decision is not always right. You must still choose SILENCE.
 
 Parse the JSON body:
   message_id, channel_id, guild_id, parent_channel_id,
-  author_id, author_username, content, is_reply,
-  referenced_message_id
+  author_id, author_username, content, content_full, is_forward,
+  forwarded, embeds, attachments, is_reply, referenced_message_id
+  (content_full has the note plus any forwarded text, embeds, and
+  attachment URLs in one block)
 
 1. Call discord_history on parent_channel_id for recent context.
    Reply in the parent channel even if the event came from a thread.
@@ -344,10 +342,9 @@ Do not skip ahead to `@Bot hello`. That hides whether the failure is REST, send,
 4. **One replica.** One supervisor pidfile, one live `supervisorPid`, one gateway.
 5. **`@Bot /status`.** Replies `Yeah, I'm here. Gateway up.` If silent, send is still 403. This does not prove inbound.
 6. **Gateway env has the webhook URL.** Read the gateway process env or log, not `discord_status.webhookConfigured`.
-7. **Forwarder listening if used.** If `GROK_WEBHOOK_URL` is loopback, `127.0.0.1:8787` must be listening.
-8. **Inbound `lastRunAt` after `@Bot hello`.** A reply or a SILENCE both count as a run. No run means the POST never arrived.
-9. **Name vs third-person.** Whole-word address gets a reply. Third-person name hits SILENCE.
-10. **Other channels silent.** A mention in a channel not in `DISCORD_CHANNEL_IDS` produces no reply and no inbound run. DMs stay quiet.
+7. **Inbound `lastRunAt` after `@Bot hello`.** A reply or a SILENCE both count as a run. No run means the POST never arrived.
+8. **Name vs third-person.** Whole-word address gets a reply. Third-person name hits SILENCE.
+9. **Other channels silent.** A mention in a channel not in `DISCORD_CHANNEL_IDS` produces no reply and no inbound run. DMs from users outside `DISCORD_ALLOWED_USER_IDS` stay quiet.
 
 Proof pair to ask the operator for: a line that addresses the bot by name should get a reply; a line that only talks about the bot by name should stay silent.
 
@@ -357,8 +354,7 @@ Use this table when the install is not clean. These are the failures that happen
 
 | Symptom | Likely cause | What to do |
 | --- | --- | --- |
-| SearchPlugins for `discord` / `grok-discord` is empty | Plugin is not in the marketplace | Copy the repo from an account that can read `NinjaProtocol/grokbot-discord`. Do not ask the operator to clone. Do not use Railway. |
-| GitHub repo URL 404s | Repo is private or the current GitHub account cannot read it | Use an account with access. The 404 is not evidence the plugin does not exist. |
+| SearchPlugins for `discord` / `grok-discord` is empty | Plugin is not in the marketplace | Install from https://github.com/griffinmc22/grokbot-discord-plugin. Do not ask the operator to clone. Do not use Railway. |
 | No Plugins → Configure card | Marketplace card does not exist | secret-request for the token; guild/channel IDs in the launch wrapper. |
 | Operator is asked to paste the token in chat | Agent drift | **Stop.** Token goes through secret-request only. Reset the token if it was pasted. |
 | Install prints an engine warning | Host Node is 20.19.x | Known. Confirm `dist/cli.js` exists, then continue. |
@@ -371,13 +367,17 @@ Use this table when the install is not clean. These are the failures that happen
 | Discord API 50013 on `rest.send` | Server team role is not enough | Channel-level custom overwrites on the **bot’s own role**. Then send again. Never Administrator. |
 | `@Bot /status` or `@Bot /new` is silent | `speak()` cannot send (same 50013 class) | Fix channel overwrites. These commands do not use the webhook. |
 | Channel shows the public error line after a mention | Worker accepted the line, then the turn threw | Read the gateway log. Do not paste the stack into Discord. |
-| Gateway log: `Invalid IP address: undefined` | Direct api2 POST plus DNS pin on a host that still mishandles `lookup` `all:true` | Loopback URL + `webhook-forward.mjs` + `GROK_WEBHOOK_UPSTREAM`, then `discord_restart_worker`. Do not disable the SSRF pin. |
-| Forwarder not listening, inbound `lastRunAt` stuck | `with-env.sh` did not start it, or port 8787 is down | Start `bin/webhook-forward.mjs`. Confirm `127.0.0.1:8787`. |
-| Inbound `lastRunAt` does not move after `@Bot hello` | POST never reached the routine | Missing URL, Invalid IP, dead forwarder, or worker not restarted after env change. One replica. |
+| Inbound `lastRunAt` does not move after `@Bot hello` | POST never reached the routine | Missing URL, wrong URL/key copied from the routine panel, or worker not restarted after env change. One replica. |
+| Worker exits: `DISCORD_ALLOWED_USER_IDS is required in intake mode` | Intake mode is on and no user IDs are set | Set your Discord user ID(s), then `discord_restart_worker`. Do not turn intake mode off just to silence this. |
+| Gateway log: `webhook 401` / `webhook 403` | Key does not match the routine | Re-copy the key from the routine panel into `GROK_WEBHOOK_SECRET`, then `discord_restart_worker`. |
 | Name-as-addressee replies, third-person name also replies | Routine is not SILENCEing third-person name hits | Use the inbound prompt in this file. Whole-word matching is working; the routine must still SILENCE. |
 | After a SILENCE, later ambient lines wake the bot | Follow-up window opened, or `author_id` was omitted on a real reply | Pass `author_id` only on real replies. SILENCE follow-up noise. Window is 15 minutes. `/new` clears it. |
 | Bot talks in the wrong channel | Channel not restricted | Fail-closed on parent channel. Check `DISCORD_CHANNEL_IDS`. |
-| Bot talks in DMs | Should be impossible | DMs have no `guildId`. Stop and inspect; do not add DM intents. |
+| Bot answers a DM from someone not allowlisted | Should be impossible | DMs require the author in `DISCORD_ALLOWED_USER_IDS` and `DISCORD_DM_INTAKE` not false. Stop and inspect the worker env. |
+| Log: `grok-discord ack reaction failed: 50013 Missing Permissions` | Bot lacks Add Reactions (or Read Message History) in that channel | Add them to the bot role's channel overrides. Forwarding still works without the reaction. |
+| Bot shows offline but the worker process is alive | Silent disconnect | Since the health watchdog, the gateway exits 1 after `HEALTH_MAX_UNHEALTHY_MS` (120 s) and its supervisor restarts it. Check the worker log for `grok-discord health:` and `shard … disconnected (code …)` lines, and the `.health` timestamp. See Reliability in `docs/INTAKE-BRIDGE.md`. |
+| Log: `another gateway (pid …) holds the lock for this bot token`, exit 3 | Two supervisors (MCP worker and `bin/run-forever.sh`) for one token | Keep one. The lock keeps it to one gateway per token. |
+| DMs to the bot get no reply | DM intake off, author not allowlisted, or worker not restarted after upgrading | Check `DISCORD_DM_INTAKE` and `DISCORD_ALLOWED_USER_IDS`, then `discord_restart_worker`. The boot log says whether DM intake is on. |
 | `discord_history` looks empty of other people | Other users omitted unless they hold an allowed role | Empty `DISCORD_ALLOWED_ROLE_IDS` allows anyone to talk, not to appear as peers in history. |
 | Need to post a screenshot; `discord_send` has no file field | MCP send/reply cannot attach | Raw multipart POST to the channel messages endpoint. Invite needs Attach Files. |
 | Two ready lines / Discord reconnect storms | Two gateway processes on one token | Kill extras. One supervisor, one gateway. MCP must never open a Gateway. |

@@ -18,7 +18,13 @@ const config: ConnectorConfig = {
   discordToken: "test-token-ensure",
   discordGuildId: "111111111111111111",
   discordChannelIds: ["222222222222222222"],
+  discordCategoryIds: [],
   discordAllowedRoleIds: [],
+  discordAllowedUserIds: ["333333333333333333"],
+  intakeMode: true,
+  dmIntake: true,
+  ackEmoji: "👀",
+  errorEmoji: "⚠️",
   rateWindowMs: 1000,
   ratePerUser: 6,
   ratePerChannel: 15,
@@ -160,5 +166,41 @@ describe("runSupervisorLoop", () => {
     });
 
     assert.deepEqual(starts, [8001, 8002]);
+  });
+
+  it("backs off on repeated quick failures and resets after a long healthy run", async () => {
+    const delays: number[] = [];
+    // Run lengths per child: 1s, 1s, 10min (then exits 1 from the health watchdog), 1s.
+    const runMs = [1_000, 1_000, 600_000, 1_000];
+    let clock = 0;
+    let round = 0;
+    let stopped = false;
+
+    await runSupervisorLoop({
+      restartDelayMs: 2_000,
+      resetAfterMs: 300_000,
+      now: () => clock,
+      isStopped: () => stopped,
+      delay: async (ms) => {
+        delays.push(ms);
+      },
+      spawnGateway() {
+        const ran = runMs[round] ?? 0;
+        round += 1;
+        return {
+          pid: 9000 + round,
+          async wait() {
+            clock += ran;
+            if (round >= runMs.length) {
+              stopped = true;
+            }
+            return 1;
+          },
+          kill() {},
+        };
+      },
+    });
+
+    assert.deepEqual(delays, [4_000, 8_000, 2_000]);
   });
 });

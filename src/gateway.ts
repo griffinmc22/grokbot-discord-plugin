@@ -3,19 +3,55 @@ import {
   Client,
   GatewayIntentBits,
   Message,
+  MessageReferenceType,
+  Partials,
+  Routes,
+  Status,
+  cleanContent,
+  type DMChannel,
   type GuildTextBasedChannel,
+  type PartialMessage,
 } from "discord.js";
+
+import {
+  addReaction,
+  markFailed,
+  reactionKey,
+  stderrReactionLogger,
+  type RemovableReactable,
+} from "./ack.ts";
+import { join } from "node:path";
 
 import type { ConnectorConfig } from "./config.ts";
 import { followUpWindowMs, publicError } from "./constants.ts";
-import { conversationKey, isDirectedAtBot, memberHasAllowedRole, shouldHandle } from "./filters.ts";
+import {
+  conversationKey,
+  isDirectedAtBot,
+  memberHasAllowedRole,
+  mentionsBot,
+  shouldHandle,
+  stripBotMentions,
+  userIsAllowed,
+} from "./filters.ts";
 import { createFileFollowUpStore } from "./follow-up.ts";
+import { acquireGatewayLock, exitLockHeld } from "./gateway-lock.ts";
+import {
+  createHealthMonitor,
+  exitUnhealthy,
+  installProcessHandlers,
+  loadHealthConfig,
+  timestamped,
+  writeFileAtomic,
+  type HealthConfig,
+  type HealthMonitor,
+} from "./health.ts";
+import type { MessageInput } from "./message-text.ts";
 import { createChannelMutex } from "./mutex.ts";
 import { deliverOutbound } from "./outbound.ts";
 import { createRateLimiter } from "./rate-limit.ts";
 import { parseRoomCommand } from "./room-commands.ts";
-import { defaultRuntimeDir, tokenFingerprint } from "./supervisor.ts";
-import { postGrokWebhook } from "./webhook.ts";
+import { defaultPluginRoot, defaultRuntimeDir, isProcessAlive, tokenFingerprint } from "./supervisor.ts";
+import { buildWebhookPayload, postGrokWebhook } from "./webhook.ts";
 
 function parentChannelIdFromMessage(message: Message): string | null {
   const { channel } = message;
@@ -61,9 +97,82 @@ async function homeChannel(message: Message): Promise<GuildTextBasedChannel> {
   return message.channel;
 }
 
+/**
+ * Category of the message's parent text channel (for a thread, the thread's
+ * parent channel's parentId). Only looked up when DISCORD_CATEGORY_IDS is set
+ * and the channel is not already allowlisted directly; null when the parent
+ * is not a server text channel, so voice-channel chat and forum posts stay out.
+ */
+async function categoryIdFor(
+  config: ConnectorConfig,
+  message: Message,
+  parentId: string | null,
+): Promise<string | null> {
+  if (
+    config.discordCategoryIds.length === 0 ||
+    message.author.bot ||
+    message.webhookId ||
+    message.guildId !== config.discordGuildId ||
+    !parentId ||
+    config.discordChannelIds.includes(parentId)
+  ) {
+    return null;
+  }
+
+  try {
+    return (await homeChannel(message)).parentId ?? null;
+  } catch {
+    return null;
+  }
+}
+
+function messageInput(message: Message): MessageInput {
+  return {
+    content: message.cleanContent,
+    embeds: message.embeds,
+    attachments: [...message.attachments.values()],
+    snapshots: [...message.messageSnapshots.values()].map((snapshot) => ({
+      content: snapshot.content,
+      embeds: snapshot.embeds,
+      attachments: [...snapshot.attachments.values()],
+    })),
+  };
+}
+
+function isDmMessage(message: Message): boolean {
+  return !message.guildId && message.channel.type === ChannelType.DM;
+}
+
+/** A forward also carries a message reference; only a real reply counts as one. */
+function replyReferenceId(message: Message): string | null {
+  const reference = message.reference;
+  if (!reference?.messageId || reference.type === MessageReferenceType.Forward) {
+    return null;
+  }
+  return reference.messageId;
+}
+
 function botNamesFor(config: ConnectorConfig, client: Client): string[] {
   const names = [config.botNamePrefix, client.user?.username, client.user?.globalName];
   return [...new Set(names.filter((name): name is string => Boolean(name && name.trim())))];
+}
+
+function botRoleIdsMentioned(client: Client, message: Message): string[] {
+  const botId = client.user?.id;
+  if (!botId) {
+    return [];
+  }
+  return [...message.mentions.roles.values()].filter((role) => role.tags?.botId === botId).map((role) => role.id);
+}
+
+function mentionedBot(client: Client, message: Message): boolean {
+  return mentionsBot(
+    {
+      mentionedUserIds: [...message.mentions.users.keys()],
+      mentionedRoles: [...message.mentions.roles.values()].map((role) => ({ id: role.id, botId: role.tags?.botId })),
+    },
+    client.user?.id,
+  );
 }
 
 async function isReplyToBot(client: Client, message: Message): Promise<boolean> {
@@ -71,12 +180,16 @@ async function isReplyToBot(client: Client, message: Message): Promise<boolean> 
     return false;
   }
 
+  const refId = replyReferenceId(message);
+  if (!refId) {
+    return false;
+  }
+
   if (message.mentions.repliedUser?.id === client.user.id) {
     return true;
   }
 
-  const refId = message.reference?.messageId;
-  if (!refId || !("messages" in message.channel)) {
+  if (!("messages" in message.channel)) {
     return false;
   }
 
@@ -87,12 +200,42 @@ async function isReplyToBot(client: Client, message: Message): Promise<boolean> 
   return referenced?.author.id === client.user.id;
 }
 
+/** Clean content without the bot's own mention, so "@Bot add dentist" reaches the routine as "add dentist". */
+function contentWithoutBotMention(client: Client, message: Message): string {
+  const botId = client.user?.id;
+  if (!botId) {
+    return message.cleanContent;
+  }
+  return cleanContent(stripBotMentions(message.content, botId, botRoleIdsMentioned(client, message)), message.channel);
+}
+
 async function speak(
   config: ConnectorConfig,
   message: Message,
   text: string,
   replyTo = true,
 ): Promise<void> {
+  if (isDmMessage(message)) {
+    const dm = message.channel as DMChannel;
+    await deliverOutbound({
+      config,
+      guildId: null,
+      parentChannelId: dm.id,
+      dmRecipientIds: [dm.recipientId ?? message.author.id],
+      inThread: false,
+      replyToMessageId: replyTo ? message.id : undefined,
+      text,
+      async post(chunk, mode) {
+        if (mode === "reply") {
+          await message.reply({ content: chunk, allowedMentions: { parse: [], repliedUser: false } });
+          return;
+        }
+        await dm.send({ content: chunk, allowedMentions: { parse: [] } });
+      },
+    });
+    return;
+  }
+
   const parentId = parentChannelIdFromMessage(message);
   const home = await homeChannel(message);
   const inThread = message.channel.isThread();
@@ -101,6 +244,7 @@ async function speak(
     config,
     guildId: message.guildId,
     parentChannelId: parentId,
+    categoryId: home.parentId,
     inThread,
     replyToMessageId: replyTo ? message.id : undefined,
     text,
@@ -118,7 +262,110 @@ async function speak(
   });
 }
 
-export async function startDiscordGateway(config: ConnectorConfig): Promise<Client> {
+function reactionTarget(client: Client, message: Message): RemovableReactable {
+  return {
+    react: (emoji) => message.react(emoji),
+    async removeOwnReaction(emoji) {
+      const botId = client.user?.id;
+      if (botId) {
+        await message.reactions.resolve(reactionKey(emoji))?.users.remove(botId);
+      }
+    },
+  };
+}
+
+/** Partial messages (enabled for DMs) carry no content until fetched. */
+async function completeMessage(incoming: Message | PartialMessage): Promise<Message | null> {
+  if (!incoming.partial) {
+    return incoming;
+  }
+
+  try {
+    return (await incoming.fetch()) as Message;
+  } catch {
+    return null;
+  }
+}
+
+function logOut(line: string): void {
+  process.stdout.write(`${timestamped(line)}\n`);
+}
+
+function logErr(line: string): void {
+  process.stderr.write(`${timestamped(line)}\n`);
+}
+
+function statusLabel(status: number): string {
+  return Object.entries(Status).find(([, value]) => value === status)?.[0] ?? String(status);
+}
+
+/** One timestamped line per connection event, so a silent disconnect is visible in the log. */
+function logGatewayEvents(client: Client, monitor: HealthMonitor, debug: boolean): void {
+  client.on("shardDisconnect", (event, shardId) => {
+    monitor.noteActivity();
+    logErr(`grok-discord shard ${shardId} disconnected (code ${event.code})`);
+  });
+  client.on("shardReconnecting", (shardId) => {
+    monitor.noteActivity();
+    logOut(`grok-discord shard ${shardId} reconnecting`);
+  });
+  client.on("shardResume", (shardId, replayedEvents) => {
+    monitor.noteActivity();
+    logOut(`grok-discord shard ${shardId} resumed (${replayedEvents} replayed events)`);
+  });
+  client.on("shardReady", (shardId, unavailableGuilds) => {
+    monitor.noteActivity();
+    logOut(`grok-discord shard ${shardId} ready (${unavailableGuilds?.size ?? 0} unavailable guilds)`);
+  });
+  client.on("shardError", (error, shardId) => {
+    monitor.noteActivity();
+    logErr(`grok-discord shard ${shardId} error: ${error.message}`);
+  });
+  client.on("invalidated", () => {
+    // discord.js cannot recover an invalidated session; let the supervisor start a fresh process.
+    logErr(`grok-discord session invalidated; exiting with code ${exitUnhealthy}`);
+    process.exit(exitUnhealthy);
+  });
+  client.on("error", (error) => {
+    logErr(`grok-discord client error: ${error.message}`);
+  });
+  client.on("warn", (info) => {
+    logErr(`grok-discord warn: ${info}`);
+  });
+  client.on("debug", (info) => {
+    if (/heartbeat/i.test(info)) {
+      monitor.noteActivity();
+      if (debug) {
+        logOut(`grok-discord debug: ${info}`);
+      }
+    }
+  });
+}
+
+export async function startDiscordGateway(
+  config: ConnectorConfig,
+  health: HealthConfig = loadHealthConfig(process.env, defaultPluginRoot()),
+): Promise<Client> {
+  // One gateway per bot token, whichever supervisor started this process.
+  const fingerprint = tokenFingerprint(config.discordToken);
+  const acquired = acquireGatewayLock({
+    path: join(defaultRuntimeDir(), `gateway-${fingerprint}.lock`),
+    pid: process.pid,
+    now: () => Date.now(),
+    isAlive: isProcessAlive,
+    staleMs: health.maxUnhealthyMs + 2 * health.intervalMs,
+  });
+  if (!acquired.ok) {
+    logErr(
+      `grok-discord another gateway (pid ${acquired.holderPid}) holds the lock for this bot token ` +
+        `(refreshed ${acquired.ageMs}ms ago); exiting with code ${exitLockHeld}`,
+    );
+    process.exit(exitLockHeld);
+  }
+  const lock = acquired.lock;
+  // Runs on every process.exit, including the watchdog and fatal-error paths, so a restart is never blocked.
+  process.on("exit", () => lock.release());
+
   const followUps = createFileFollowUpStore(
     defaultRuntimeDir(),
     tokenFingerprint(config.discordToken),
@@ -133,26 +380,74 @@ export async function startDiscordGateway(config: ConnectorConfig): Promise<Clie
       GatewayIntentBits.Guilds,
       GatewayIntentBits.GuildMessages,
       GatewayIntentBits.MessageContent,
+      GatewayIntentBits.DirectMessages,
     ],
+    // DM channels are not cached before their first message; without these partials messageCreate never fires for DMs.
+    partials: [Partials.Channel, Partials.Message],
   });
 
-  let booted = false;
+  const monitor = createHealthMonitor(health, {
+    now: () => Date.now(),
+    isReady: () => client.ws.status === Status.Ready,
+    statusLabel: () => statusLabel(client.ws.status),
+    ping: () => client.ws.ping,
+    writeHealthFile(path, contents) {
+      writeFileAtomic(path, contents);
+      if (!lock.refresh()) {
+        logErr(`grok-discord lost the gateway lock to another process; exiting with code ${exitUnhealthy}`);
+        process.exit(exitUnhealthy);
+      }
+    },
+    restCheck: () => client.rest.get(Routes.user("@me")),
+    exit: (code) => process.exit(code),
+    log: (line) => process.stderr.write(`${line}\n`),
+  });
+
+  installProcessHandlers(process, {
+    async shutdown() {
+      monitor.stop();
+      await client.destroy();
+      lock.release();
+    },
+    exit: (code) => process.exit(code),
+    log: (line) => process.stderr.write(`${line}\n`),
+  });
+
+  logGatewayEvents(client, monitor, health.debug);
+
   const onReady = () => {
-    if (booted) {
-      return;
-    }
-    booted = true;
     const tag = client.user?.tag ?? "unknown";
-    process.stdout.write(`grok-discord ready as ${tag}; one replica per bot token\n`);
+    logOut(`grok-discord ready as ${tag}; one replica per bot token`);
+    logOut(
+      `grok-discord health: file ${health.healthFile} every ${health.intervalMs}ms; ` +
+        `exit ${exitUnhealthy} after ${health.maxUnhealthyMs}ms unhealthy or ${health.restMaxFailures} failed REST checks`,
+    );
+    process.stdout.write(
+      config.intakeMode
+        ? `grok-discord intake mode: ${config.discordAllowedUserIds.length} allowed user(s); guild channels (${config.discordChannelIds.length} channel(s), ${config.discordCategoryIds.length} category(ies)) need an @mention or a reply to the bot\n`
+        : "grok-discord chat mode: only mentions, replies, bot names, and follow-ups are forwarded\n",
+    );
+    process.stdout.write(
+      config.dmIntake && config.discordAllowedUserIds.length > 0
+        ? "grok-discord DM intake on: every DM from an allowed user is forwarded\n"
+        : "grok-discord DM intake off: DMs are ignored\n",
+    );
     if (!config.grokWebhookUrl) {
       process.stdout.write("grok-discord GROK_WEBHOOK_URL is not set; inbound will not wake a Grok Bot\n");
     }
   };
 
+  // clientReady only (the old "ready" name is deprecated); once = one-shot boot log.
   client.once("clientReady", onReady);
-  client.once("ready", onReady);
 
-  client.on("messageCreate", async (message) => {
+  client.on("messageCreate", async (incoming) => {
+    monitor.noteActivity();
+    const message = await completeMessage(incoming as Message | PartialMessage);
+    if (!message) {
+      return;
+    }
+
+    const isDm = isDmMessage(message);
     const parentId = parentChannelIdFromMessage(message);
     if (
       !shouldHandle({
@@ -160,46 +455,75 @@ export async function startDiscordGateway(config: ConnectorConfig): Promise<Clie
         webhookId: message.webhookId,
         guildId: message.guildId,
         parentChannelId: parentId,
+        categoryId: isDm ? null : await categoryIdFor(config, message, parentId),
         configuredGuildId: config.discordGuildId,
         configuredChannelIds: config.discordChannelIds,
+        configuredCategoryIds: config.discordCategoryIds,
+        isDm,
+        authorId: message.author.id,
+        allowedUserIds: config.discordAllowedUserIds,
+        dmIntake: config.dmIntake,
       })
     ) {
       return;
     }
 
-    const guildId = message.guildId;
-    if (!parentId || !guildId) {
+    // DMs scope by their DM channel; guild messages by their parent text channel.
+    const scopeId = isDm ? message.channel.id : parentId;
+    if (!scopeId) {
+      return;
+    }
+
+    if (!userIsAllowed(config.discordAllowedUserIds, message.author.id)) {
       return;
     }
 
     const names = botNamesFor(config, client);
-    const sessionKey = conversationKey(parentId, message.author.id);
+    const sessionKey = conversationKey(scopeId, message.author.id);
+    const mentioned = !isDm && mentionedBot(client, message);
     const directed = isDirectedAtBot({
-      mentionedBot: Boolean(client.user && message.mentions.has(client.user)),
-      isReplyToBot: await isReplyToBot(client, message),
+      isDm,
+      intakeMode: config.intakeMode,
+      mentionedBot: mentioned,
+      isReplyToBot: !isDm && !mentioned && (await isReplyToBot(client, message)),
       content: message.cleanContent,
       botNames: names,
-      followUp: followUps.isFollowUp(sessionKey),
+      followUp: !config.intakeMode && followUps.isFollowUp(sessionKey),
     });
 
     if (!directed) {
       return;
     }
 
-    const member = message.member;
-    const roleIds = member ? [...member.roles.cache.keys()] : null;
-    if (!memberHasAllowedRole(config.discordAllowedRoleIds, roleIds)) {
+    // Roles only exist in the guild; DMs are gated by the user allowlist alone.
+    if (!isDm) {
+      const member = message.member;
+      const roleIds = member ? [...member.roles.cache.keys()] : null;
+      if (!memberHasAllowedRole(config.discordAllowedRoleIds, roleIds)) {
+        return;
+      }
+    }
+
+    const content = contentWithoutBotMention(client, message);
+
+    // Rate limit at arrival (not after waiting on the channel mutex), so the ack below is instant
+    // and rate-limited drops never get one.
+    if (!userRate.allow(message.author.id) || !channelRate.allow(scopeId)) {
+      process.stderr.write("grok-discord inbound dropped: rate limited\n");
       return;
     }
 
-    await mutex.run(parentId, async () => {
-      try {
-        if (!userRate.allow(message.author.id) || !channelRate.allow(parentId)) {
-          process.stderr.write("grok-discord inbound dropped: rate limited\n");
-          return;
-        }
+    // Fire-and-forget: a slow or failed reaction never delays or blocks forwarding.
+    const reactions = reactionTarget(client, message);
+    const ackPending = addReaction(reactions, config.ackEmoji, stderrReactionLogger);
 
-        const roomCommand = parseRoomCommand(message.cleanContent, names);
+    await mutex.run(scopeId, async () => {
+      try {
+        // In intake mode a forwarded message is always an intake item, whatever the note says.
+        const roomCommand =
+          config.intakeMode && message.messageSnapshots.size > 0
+            ? null
+            : parseRoomCommand(content, config.intakeMode ? [] : names, { slashOnly: config.intakeMode });
         if (roomCommand?.kind === "new") {
           followUps.clear(sessionKey);
           await speak(config, message, "Fresh thread. I'm listening.");
@@ -216,24 +540,37 @@ export async function startDiscordGateway(config: ConnectorConfig): Promise<Clie
           return;
         }
 
+        const replyRef = replyReferenceId(message);
         await postGrokWebhook(
           config.grokWebhookUrl,
-          {
-            message_id: message.id,
-            channel_id: message.channel.id,
-            guild_id: guildId,
-            parent_channel_id: parentId,
-            author_id: message.author.id,
-            author_username: message.author.username,
-            content: message.cleanContent,
-            is_reply: Boolean(message.reference?.messageId),
-            referenced_message_id: message.reference?.messageId ?? null,
-          },
+          buildWebhookPayload({
+            messageId: message.id,
+            channelId: message.channel.id,
+            guildId: message.guildId,
+            parentChannelId: parentId,
+            isDm,
+            authorId: message.author.id,
+            authorUsername: message.author.username,
+            content,
+            contentOriginal: message.cleanContent,
+            message: messageInput(message),
+            isReply: Boolean(replyRef),
+            referencedMessageId: replyRef,
+          }),
           config.grokWebhookSecret,
         );
       } catch (error) {
         const detail = error instanceof Error ? error.message : "unknown error";
         process.stderr.write(`grok-discord turn error: ${detail}\n`);
+        if (/webhook timeout|TimeoutError|aborted due to timeout/i.test(detail)) {
+          // The request was sent; Grok Bot is likely still processing it. Stay quiet.
+          return;
+        }
+        void markFailed(
+          reactions,
+          { ackEmoji: config.ackEmoji, errorEmoji: config.errorEmoji, ackPending },
+          stderrReactionLogger,
+        );
         try {
           await speak(config, message, publicError);
         } catch (speakError) {
@@ -244,6 +581,7 @@ export async function startDiscordGateway(config: ConnectorConfig): Promise<Clie
     });
   });
 
+  monitor.start();
   await client.login(config.discordToken);
   return client;
 }

@@ -18,7 +18,16 @@ function isStatusAsk(cleaned: string): boolean {
   );
 }
 
-export function parseRoomCommand(text: string, botNames: string[] = []): RoomCommand | null {
+export type RoomCommandOptions = {
+  /** Only explicit /status, /new, /reset. Intake notes like "status?" must reach the routine. */
+  slashOnly?: boolean;
+};
+
+export function parseRoomCommand(
+  text: string,
+  botNames: string[] = [],
+  options: RoomCommandOptions = {},
+): RoomCommand | null {
   const cleaned = cleanCommandText(text, botNames);
   if (!cleaned) {
     return null;
@@ -26,6 +35,10 @@ export function parseRoomCommand(text: string, botNames: string[] = []): RoomCom
 
   if (/^(?:\/new|\/reset)\s*$/i.test(cleaned)) {
     return { kind: "new" };
+  }
+
+  if (options.slashOnly) {
+    return /^\/status\s*$/i.test(cleaned) ? { kind: "status" } : null;
   }
 
   if (isStatusAsk(cleaned)) {

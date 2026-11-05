@@ -6,8 +6,8 @@
   "author": {
     "name": "NinjaProtocol"
   },
-  "homepage": "https://github.com/NinjaProtocol/grokbot-discord",
-  "repository": "https://github.com/NinjaProtocol/grokbot-discord",
+  "homepage": "https://github.com/griffinmc22/grokbot-discord-plugin",
+  "repository": "https://github.com/griffinmc22/grokbot-discord-plugin",
   "license": "MIT",
   "keywords": [
     "discord",
@@ -32,12 +32,32 @@
       "DISCORD_CHANNEL_IDS": {
         "type": "string",
         "title": "Allowlisted channel IDs",
-        "description": "Comma-separated parent channel snowflakes. DMs and other channels are ignored."
+        "description": "Comma-separated parent channel snowflakes. Optional if DISCORD_CATEGORY_IDS is set; at least one of the two is required. DMs and other channels are ignored."
+      },
+      "DISCORD_CATEGORY_IDS": {
+        "type": "string",
+        "title": "Allowlisted category IDs",
+        "description": "Optional comma-separated category snowflakes. Every text channel in these categories (and threads under them) is allowed, in addition to DISCORD_CHANNEL_IDS."
+      },
+      "DISCORD_ALLOWED_USER_IDS": {
+        "type": "string",
+        "title": "Allowed user IDs",
+        "description": "Comma-separated Discord user snowflakes. Only these users are handled. Required in intake mode (the default); the bridge refuses to start without it."
+      },
+      "DISCORD_INTAKE_MODE": {
+        "type": "string",
+        "title": "Intake mode",
+        "description": "Optional, default true. Allowed users only; in guild channels the bot must be @mentioned or replied to (no name matching). Set false for legacy chat mode."
+      },
+      "DISCORD_DM_INTAKE": {
+        "type": "string",
+        "title": "DM intake",
+        "description": "Optional, default true. Every DM to the bot from a user in DISCORD_ALLOWED_USER_IDS is forwarded with no mention; DMs from anyone else are ignored. Set false to ignore all DMs."
       },
       "DISCORD_ALLOWED_ROLE_IDS": {
         "type": "string",
         "title": "Allowed role IDs",
-        "description": "Optional comma-separated role snowflakes. Empty means anyone in an allowlisted channel."
+        "description": "Optional comma-separated role snowflakes, checked in addition to DISCORD_ALLOWED_USER_IDS. Empty means no extra role check."
       },
       "GROK_WEBHOOK_URL": {
         "type": "string",
@@ -55,6 +75,6 @@
         "description": "Optional spoken name. Matched as a whole word anywhere in the message after mentions are stripped. Defaults to the Discord username."
       }
     },
-    "required": ["DISCORD_TOKEN", "DISCORD_GUILD_ID", "DISCORD_CHANNEL_IDS"]
+    "required": ["DISCORD_TOKEN", "DISCORD_GUILD_ID", "DISCORD_ALLOWED_USER_IDS"]
   }
 }

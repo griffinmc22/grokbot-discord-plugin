@@ -1,0 +1,2 @@
+# Shell scripts must keep LF line endings, even in Windows checkouts, or sh rejects them.
+*.sh text eol=lf

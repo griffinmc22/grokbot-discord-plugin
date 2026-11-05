@@ -3,6 +3,7 @@ import {
   REST,
   Routes,
   type RESTGetAPIChannelResult,
+  type RESTGetAPIGuildChannelsResult,
   type RESTGetAPIChannelMessagesResult,
   type RESTGetAPICurrentUserResult,
   type RESTGetAPIGuildResult,
@@ -10,7 +11,12 @@ import {
 } from "discord.js";
 
 import { assertChannelAllowed } from "./allowlist.ts";
-import { formatHistoryLine, shouldIncludeHistoryMessage, type HistoryEntry } from "./channel-history.ts";
+import {
+  formatHistoryLine,
+  historyContent,
+  shouldIncludeHistoryMessage,
+  type HistoryEntry,
+} from "./channel-history.ts";
 import type { ConnectorConfig } from "./config.ts";
 import { recentHistoryLimit } from "./constants.ts";
 import { assertSafeEmoji, assertSnowflake } from "./ids.ts";
@@ -18,8 +24,14 @@ import { deliverOutbound } from "./outbound.ts";
 
 export type ResolvedChannel = {
   id: string;
-  guildId: string;
+  /** Null for DM channels. */
+  guildId: string | null;
+  /** The parent text channel; for DMs, the DM channel itself. */
   parentChannelId: string;
+  /** Category (parent_id) of the parent text channel; null if none or not looked up. */
+  categoryId: string | null;
+  /** DM recipients (user ids) for DM channels; null for guild channels. */
+  dmRecipientIds: string[] | null;
   inThread: boolean;
   name: string;
   type: number;
@@ -42,8 +54,42 @@ export function createDiscordRest(config: ConnectorConfig, rest = new REST({ ver
     return (await rest.get(Routes.channel(channelId))) as RESTGetAPIChannelResult;
   }
 
+  function needsCategory(parentChannelId: string): boolean {
+    return config.discordCategoryIds.length > 0 && !config.discordChannelIds.includes(parentChannelId);
+  }
+
+  /** A thread's parent must itself be a server text channel; its parent_id is the category. */
+  async function threadParentCategory(parentChannelId: string): Promise<string | null> {
+    if (!needsCategory(parentChannelId)) {
+      return null;
+    }
+
+    const parent = await fetchChannel(parentChannelId);
+    if (!isParentType(parent.type)) {
+      return null;
+    }
+
+    return ("parent_id" in parent ? parent.parent_id : null) ?? null;
+  }
+
   async function resolveChannel(channelId: string): Promise<ResolvedChannel> {
     const channel = await fetchChannel(assertSnowflake(channelId, "channel_id"));
+
+    // 1:1 DM with the bot. Allowed later only if a recipient is an allowed user.
+    if (channel.type === ChannelType.DM) {
+      const recipients = "recipients" in channel ? (channel.recipients ?? []) : [];
+      return {
+        id: channel.id,
+        guildId: null,
+        parentChannelId: channel.id,
+        categoryId: null,
+        dmRecipientIds: recipients.map((user) => user.id),
+        inThread: false,
+        name: "DM",
+        type: channel.type,
+      };
+    }
+
     const guildId = "guild_id" in channel ? channel.guild_id : undefined;
     if (!guildId) {
       throw new Error("Channel is outside the configured Discord allowlist.");
@@ -59,6 +105,8 @@ export function createDiscordRest(config: ConnectorConfig, rest = new REST({ ver
         id: channel.id,
         guildId,
         parentChannelId: parentId,
+        categoryId: await threadParentCategory(parentId),
+        dmRecipientIds: null,
         inThread: true,
         name: channel.name ?? channel.id,
         type: channel.type,
@@ -73,6 +121,8 @@ export function createDiscordRest(config: ConnectorConfig, rest = new REST({ ver
       id: channel.id,
       guildId,
       parentChannelId: channel.id,
+      categoryId: ("parent_id" in channel ? channel.parent_id : null) ?? null,
+      dmRecipientIds: null,
       inThread: false,
       name: "name" in channel && channel.name ? channel.name : channel.id,
       type: channel.type,
@@ -81,8 +131,31 @@ export function createDiscordRest(config: ConnectorConfig, rest = new REST({ ver
 
   async function assertResolved(channelId: string): Promise<ResolvedChannel> {
     const resolved = await resolveChannel(channelId);
-    assertChannelAllowed(config, resolved.guildId, resolved.parentChannelId);
+    assertChannelAllowed(
+      config,
+      resolved.guildId,
+      resolved.parentChannelId,
+      resolved.categoryId,
+      resolved.dmRecipientIds,
+    );
     return resolved;
+  }
+
+  /** Text channels directly under an allowlisted category. */
+  async function categoryChannels(): Promise<{ id: string; name: string; categoryId: string }[]> {
+    if (config.discordCategoryIds.length === 0) {
+      return [];
+    }
+
+    const channels = (await rest.get(Routes.guildChannels(config.discordGuildId))) as RESTGetAPIGuildChannelsResult;
+    return channels
+      .filter((channel) => isParentType(channel.type))
+      .flatMap((channel) => {
+        const categoryId = "parent_id" in channel ? channel.parent_id : null;
+        return categoryId && config.discordCategoryIds.includes(categoryId)
+          ? [{ id: channel.id, name: channel.name ?? channel.id, categoryId }]
+          : [];
+      });
   }
 
   async function postMessage(
@@ -133,11 +206,26 @@ export function createDiscordRest(config: ConnectorConfig, rest = new REST({ ver
         }
       }
 
+      try {
+        for (const channel of await categoryChannels()) {
+          if (!channels.some((known) => known.id === channel.id)) {
+            channels.push({ id: channel.id, name: channel.name });
+          }
+        }
+      } catch {
+        for (const categoryId of config.discordCategoryIds) {
+          channels.push({ id: categoryId, name: "(category unavailable)" });
+        }
+      }
+
       return {
         bot: { id: me.id, username: me.username },
         guild: { id: guild.id, name: guild.name },
         channels,
+        categoryIds: config.discordCategoryIds,
         allowedRoleIds: config.discordAllowedRoleIds,
+        allowedUserIds: config.discordAllowedUserIds,
+        intakeMode: config.intakeMode,
         webhookConfigured: Boolean(config.grokWebhookUrl),
       };
     },
@@ -152,6 +240,11 @@ export function createDiscordRest(config: ConnectorConfig, rest = new REST({ ver
           guild_id: resolved.guildId,
         });
       }
+      for (const channel of await categoryChannels()) {
+        if (!channels.some((known) => known.id === channel.id)) {
+          channels.push({ id: channel.id, name: channel.name, guild_id: config.discordGuildId });
+        }
+      }
       return channels;
     },
 
@@ -163,6 +256,8 @@ export function createDiscordRest(config: ConnectorConfig, rest = new REST({ ver
         config,
         guildId: resolved.guildId,
         parentChannelId: resolved.parentChannelId,
+        categoryId: resolved.categoryId,
+        dmRecipientIds: resolved.dmRecipientIds,
         inThread: false,
         text,
         async post(chunk) {
@@ -183,6 +278,8 @@ export function createDiscordRest(config: ConnectorConfig, rest = new REST({ ver
         config,
         guildId: resolved.guildId,
         parentChannelId: resolved.parentChannelId,
+        categoryId: resolved.categoryId,
+        dmRecipientIds: resolved.dmRecipientIds,
         inThread: resolved.inThread,
         replyToMessageId: replyTo,
         text,
@@ -220,15 +317,20 @@ export function createDiscordRest(config: ConnectorConfig, rest = new REST({ ver
           bot: Boolean(message.author.bot),
           webhook: Boolean(message.webhook_id),
           roleIds: withMember.member?.roles ?? [],
-          content: message.content,
-          attachmentNames: message.attachments.map((file) => file.filename),
+          content: historyContent(message),
         };
       });
 
       const authorId = currentAuthorId ?? entries[0]?.authorId ?? me.id;
       const lines = entries
         .filter((entry) =>
-          shouldIncludeHistoryMessage(config.discordAllowedRoleIds, authorId, me.id, entry),
+          shouldIncludeHistoryMessage(
+            config.discordAllowedRoleIds,
+            config.discordAllowedUserIds,
+            authorId,
+            me.id,
+            entry,
+          ),
         )
         .reverse()
         .map(formatHistoryLine);

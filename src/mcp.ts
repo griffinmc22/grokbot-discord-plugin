@@ -72,7 +72,7 @@ export function createMcpServer(
 
   server.tool(
     "discord_send",
-    "Send text to an allowlisted parent channel. SILENCE or empty posts nothing. Never starts a thread. Cannot attach files.",
+    "Send text to an allowlisted parent channel, or to an allowed user's DM channel (use the inbound channel_id). SILENCE or empty posts nothing. Never starts a thread. Cannot attach files.",
     {
       channel_id: snowflake.describe("Parent channel snowflake. Threads resolve to their parent."),
       content: z.string().describe("Message text. Use SILENCE to post nothing."),
@@ -91,7 +91,7 @@ export function createMcpServer(
 
   server.tool(
     "discord_reply",
-    "Reply in the parent channel of an inbound message. Thread pings still reply in the parent. SILENCE posts nothing. Cannot attach files.",
+    "Reply in the parent channel of an inbound message, or in the DM channel for DMs (is_dm). Thread pings still reply in the parent. SILENCE posts nothing. Cannot attach files.",
     {
       channel_id: snowflake.describe("Channel snowflake of the inbound message."),
       message_id: snowflake.describe("Inbound message snowflake to reply to when it is in the parent channel."),
@@ -111,7 +111,7 @@ export function createMcpServer(
 
   server.tool(
     "discord_history",
-    "Read recent messages from an allowlisted channel. Other users are omitted unless they hold an allowed role.",
+    "Read recent messages from an allowlisted channel or an allowed user's DM channel. Other users are omitted unless they hold an allowed role.",
     {
       channel_id: snowflake.describe("Channel snowflake."),
       author_id: snowflake.optional().describe("Current speaker id used to include their prior lines."),
@@ -136,7 +136,7 @@ export function createMcpServer(
 
   server.tool(
     "discord_react",
-    "Add a reaction to a message in an allowlisted channel.",
+    "Add a reaction to a message in an allowlisted channel or an allowed user's DM channel.",
     {
       channel_id: snowflake.describe("Channel snowflake of the message."),
       message_id: snowflake.describe("Message snowflake."),

@@ -9,6 +9,10 @@ export type DeliverOutboundInput = {
   config: AllowlistConfig;
   guildId: string | null | undefined;
   parentChannelId: string | null | undefined;
+  /** Category (parent_id) of the parent channel, for DISCORD_CATEGORY_IDS. */
+  categoryId?: string | null;
+  /** DM recipients when posting to a DM channel; must include an allowed user. */
+  dmRecipientIds?: readonly string[] | null;
   inThread: boolean;
   replyToMessageId?: string;
   text: string;
@@ -21,7 +25,13 @@ export type DeliverOutboundResult = {
 };
 
 export async function deliverOutbound(input: DeliverOutboundInput): Promise<DeliverOutboundResult> {
-  assertChannelAllowed(input.config, input.guildId, input.parentChannelId);
+  assertChannelAllowed(
+    input.config,
+    input.guildId,
+    input.parentChannelId,
+    input.categoryId,
+    input.dmRecipientIds,
+  );
 
   const prepared = prepareOutbound(input.text);
   if (prepared.silent) {

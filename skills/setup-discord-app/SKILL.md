@@ -51,7 +51,7 @@ A server team role with Send Messages is **not** enough. Until each allowlisted 
 3. Right-click each allowlisted **parent** text channel → **Copy Channel ID** → join them with commas as `DISCORD_CHANNEL_IDS`
 4. Optional: copy role IDs for `DISCORD_ALLOWED_ROLE_IDS`. Empty means anyone in those channels.
 
-DMs are ignored. The gateway does not enable Direct Message intents.
+DMs are forwarded only from users in `DISCORD_ALLOWED_USER_IDS` (DM intake, on by default; `DISCORD_DM_INTAKE=false` turns it off). The Direct Messages intent the gateway uses is not privileged, so nothing extra needs enabling in the portal.
 
 If they use a spoken name that differs from the Discord username, they will set `BOT_NAME_PREFIX` when connecting. Matching is a whole-word name anywhere after mentions are stripped, plus @mention.
 

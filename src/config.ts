@@ -3,14 +3,36 @@ import {
   defaultRatePerUser,
   defaultRateWindowMs,
 } from "./constants.ts";
+import { defaultAckEmoji, defaultErrorEmoji, resolveReactionEmoji } from "./ack.ts";
+import { usableEnvValue, type EnvMap } from "./env.ts";
 import { assertSnowflake, parseSnowflakeList } from "./ids.ts";
 import { parsePublicWebhookUrl } from "./webhook-url.ts";
 
 export type ConnectorConfig = {
   discordToken: string;
   discordGuildId: string;
+  /** Allowlisted parent text channels. Optional when discordCategoryIds is set. */
   discordChannelIds: string[];
+  /** Allowlisted categories: any text channel under them (and its threads) is allowed. */
+  discordCategoryIds: string[];
   discordAllowedRoleIds: string[];
+  /** Only these Discord user IDs are handled. Required when intakeMode is on. */
+  discordAllowedUserIds: string[];
+  /**
+   * Intake mode (default): allowed users only; in guild channels the bot must be
+   * @mentioned or replied to (no name matching, no follow-up window).
+   * Off: legacy chat mode (mention, reply, bot name, or follow-up).
+   */
+  intakeMode: boolean;
+  /**
+   * DM intake (default): every DM to the bot from an allowed user is forwarded
+   * with no mention. DMs are never handled when discordAllowedUserIds is empty.
+   */
+  dmIntake: boolean;
+  /** Reaction added the moment a message is accepted (default 👀); null = off. */
+  ackEmoji: string | null;
+  /** Reaction added when forwarding fails (default ⚠️); null = off. */
+  errorEmoji: string | null;
   grokWebhookUrl?: string;
   grokWebhookSecret?: string;
   botNamePrefix?: string;
@@ -19,36 +41,7 @@ export type ConnectorConfig = {
   ratePerChannel: number;
 };
 
-type EnvMap = Record<string, string | undefined>;
-
-function isUnresolvedPlaceholder(value: string): boolean {
-  return (
-    value.startsWith("${") ||
-    value.startsWith("{{") ||
-    value.startsWith("${{") ||
-    /^<[A-Z0-9_]+>$/i.test(value)
-  );
-}
-
-export function usableEnvValue(value: string | undefined): string | undefined {
-  let trimmed = value?.trim();
-  if (!trimmed) {
-    return undefined;
-  }
-
-  if (
-    (trimmed.startsWith('"') && trimmed.endsWith('"')) ||
-    (trimmed.startsWith("'") && trimmed.endsWith("'"))
-  ) {
-    trimmed = trimmed.slice(1, -1).trim();
-  }
-
-  if (!trimmed || isUnresolvedPlaceholder(trimmed)) {
-    return undefined;
-  }
-
-  return trimmed;
-}
+export { usableEnvValue } from "./env.ts";
 
 export function optionalEnv(name: string, env: EnvMap = process.env): string | undefined {
   const direct = usableEnvValue(env[name]);
@@ -82,11 +75,20 @@ function parseChannelIds(env: EnvMap): string[] {
     ...parseSnowflakeList(optionalEnv("DISCORD_CHANNEL_ID", env), "DISCORD_CHANNEL_ID"),
   ]);
 
-  if (ids.size === 0) {
-    throw new Error("Missing required env DISCORD_CHANNEL_IDS");
+  return [...ids];
+}
+
+function parseChannelScope(env: EnvMap): { channelIds: string[]; categoryIds: string[] } {
+  const channelIds = parseChannelIds(env);
+  const categoryIds = parseSnowflakeList(optionalEnv("DISCORD_CATEGORY_IDS", env), "DISCORD_CATEGORY_IDS");
+
+  if (channelIds.length === 0 && categoryIds.length === 0) {
+    throw new Error(
+      "Missing required env DISCORD_CHANNEL_IDS or DISCORD_CATEGORY_IDS: set at least one allowlisted channel or category",
+    );
   }
 
-  return [...ids];
+  return { channelIds, categoryIds };
 }
 
 function parsePositiveMs(name: string, fallback: number, env: EnvMap): number {
@@ -125,6 +127,23 @@ function parseWebhookUrl(raw: string | undefined): string | undefined {
   return parsePublicWebhookUrl(raw);
 }
 
+export function parseBooleanEnv(name: string, fallback: boolean, env: EnvMap): boolean {
+  const raw = optionalEnv(name, env);
+  if (!raw) {
+    return fallback;
+  }
+
+  if (/^(?:1|true|yes|on)$/i.test(raw)) {
+    return true;
+  }
+
+  if (/^(?:0|false|no|off)$/i.test(raw)) {
+    return false;
+  }
+
+  throw new Error(`${name} must be true or false`);
+}
+
 function parseBotNamePrefix(raw: string | undefined): string | undefined {
   if (!raw) {
     return undefined;
@@ -145,14 +164,37 @@ export function loadConfig(env: EnvMap = process.env): ConnectorConfig {
     throw new Error("GROK_WEBHOOK_SECRET is required when GROK_WEBHOOK_URL is set");
   }
 
+  const intakeMode = parseBooleanEnv("DISCORD_INTAKE_MODE", true, env);
+  const discordAllowedUserIds = parseSnowflakeList(
+    optionalEnv("DISCORD_ALLOWED_USER_IDS", env),
+    "DISCORD_ALLOWED_USER_IDS",
+  );
+
+  if (intakeMode && discordAllowedUserIds.length === 0) {
+    throw new Error(
+      "DISCORD_ALLOWED_USER_IDS is required in intake mode: set it to your comma-separated Discord user IDs " +
+        "(or set DISCORD_INTAKE_MODE=false for mention-driven chat). Refusing to accept messages from everyone.",
+    );
+  }
+
+  const discordToken = requiredEnv("DISCORD_TOKEN", env);
+  const discordGuildId = assertSnowflake(requiredEnv("DISCORD_GUILD_ID", env), "DISCORD_GUILD_ID");
+  const scope = parseChannelScope(env);
+
   return {
-    discordToken: requiredEnv("DISCORD_TOKEN", env),
-    discordGuildId: assertSnowflake(requiredEnv("DISCORD_GUILD_ID", env), "DISCORD_GUILD_ID"),
-    discordChannelIds: parseChannelIds(env),
+    discordToken,
+    discordGuildId,
+    discordChannelIds: scope.channelIds,
+    discordCategoryIds: scope.categoryIds,
     discordAllowedRoleIds: parseSnowflakeList(
       optionalEnv("DISCORD_ALLOWED_ROLE_IDS", env),
       "DISCORD_ALLOWED_ROLE_IDS",
     ),
+    discordAllowedUserIds,
+    intakeMode,
+    dmIntake: parseBooleanEnv("DISCORD_DM_INTAKE", true, env),
+    ackEmoji: resolveReactionEmoji("DISCORD_ACK_EMOJI", defaultAckEmoji, env),
+    errorEmoji: resolveReactionEmoji("DISCORD_ERROR_EMOJI", defaultErrorEmoji, env),
     grokWebhookUrl,
     grokWebhookSecret,
     botNamePrefix: parseBotNamePrefix(optionalEnv("BOT_NAME_PREFIX", env)),

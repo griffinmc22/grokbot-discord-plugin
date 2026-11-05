@@ -7,8 +7,8 @@
     "name": "NinjaProtocol",
     "url": "https://github.com/NinjaProtocol"
   },
-  "homepage": "https://github.com/NinjaProtocol/grokbot-discord",
-  "repository": "https://github.com/NinjaProtocol/grokbot-discord",
+  "homepage": "https://github.com/griffinmc22/grokbot-discord-plugin",
+  "repository": "https://github.com/griffinmc22/grokbot-discord-plugin",
   "license": "MIT",
   "keywords": ["discord", "grok-bot", "cursor", "mcp", "gateway"]
 }
